@@ -1,75 +1,60 @@
-import type { LayoutResult } from '../types';
-import { drawGraph, edgeInternalGroup } from './drawGraph';
+import type { LayoutResult, Point } from '../types';
+import { drawGraph, computeEffectiveEdges } from './drawGraph';
 import { ParticleSystem } from './particles';
 import { pointAtProgress } from './pathUtils';
 
 const PARTICLE_RADIUS = 4;
 const PARTICLE_GLOW_RADIUS = 8;
 
-/** Smoothstep interpolation */
-function smoothstep(a: number, b: number, x: number): number {
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
+const DEFAULT_COLLAPSE_THRESHOLD_PX = 200;
 
 /**
- * Compute per-group visibility: 0 when the group is too small on screen
- * to show its internals, 1 when it's large enough. Fades between.
+ * Determine which groups are currently collapsed based on their rendered
+ * on-screen width against either a per-group `collapseAtPx` or the global
+ * default. An outer collapsed group implicitly collapses its descendants,
+ * but descendants are kept out of the set (renderer walks ancestors).
  */
-export function computeGroupFades(
+export function computeCollapsedGroups(
   layout: LayoutResult,
   effectiveScale: number,
-): Map<string, number> {
-  const fades = new Map<string, number>();
-  const FADE_START_PX = 200; // group narrower than this hides internals
-  const FADE_END_PX = 360;   // group wider than this shows internals
+  globalThresholdPx: number = DEFAULT_COLLAPSE_THRESHOLD_PX,
+): Set<string> {
+  const collapsed = new Set<string>();
   for (const group of layout.groups) {
+    const threshold = group.collapseAtPx ?? globalThresholdPx;
     const renderedWidth = group.width * effectiveScale;
-    fades.set(group.id, smoothstep(FADE_START_PX, FADE_END_PX, renderedWidth));
+    if (renderedWidth < threshold) collapsed.add(group.id);
   }
-  return fades;
+  return collapsed;
 }
 
 function drawParticles(
   ctx: CanvasRenderingContext2D,
   particleSystem: ParticleSystem,
-  layout: LayoutResult,
-  groupFade: Map<string, number> | undefined,
+  effectiveEdges: Map<string, { points: Point[]; suppressed: boolean }>,
 ) {
-  // Track which flows have already drawn a label (only label the leading particle)
   const labeledFlows = new Set<string>();
 
-  // Build node -> group lookup for deciding if a particle's edge is internal
-  const nodeGroup = new Map<string, string | undefined>();
-  for (const n of layout.nodes) nodeGroup.set(n.id, n.parentGroup);
-
-  // Sort so leading particle gets the label: forward = highest progress first, reverse = lowest first
+  // Sort so leading particle gets the label (forward = highest progress first, reverse = lowest first)
   const sorted = [...particleSystem.particles].sort((a, b) => {
     if (a.reverse !== b.reverse) return a.reverse ? 1 : -1;
     return a.reverse ? a.progress - b.progress : b.progress - a.progress;
   });
 
   for (const particle of sorted) {
-    const edge = layout.edges.find(e => e.id === particle.edgeId);
-    if (!edge || edge.points.length < 2) continue;
+    const eff = effectiveEdges.get(particle.edgeId);
+    if (!eff || eff.suppressed || eff.points.length < 2) continue;
 
-    // If this particle's edge is internal to a fading group, fade the particle too
-    const internalGroup = edgeInternalGroup(edge, nodeGroup);
-    const fade = internalGroup && groupFade ? (groupFade.get(internalGroup) ?? 1) : 1;
-    if (fade <= 0.01) continue;
-
-    const pos = pointAtProgress(edge.points, particle.progress);
+    const pos = pointAtProgress(eff.points, particle.progress);
 
     ctx.save();
-    ctx.globalAlpha = fade;
-
-    // Glow effect
+    // Glow
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, PARTICLE_GLOW_RADIUS, 0, Math.PI * 2);
     ctx.fillStyle = particle.color + '30';
     ctx.fill();
 
-    // Particle dot
+    // Dot
     ctx.beginPath();
     ctx.arc(pos.x, pos.y, PARTICLE_RADIUS, 0, Math.PI * 2);
     ctx.fillStyle = particle.color;
@@ -81,7 +66,6 @@ function drawParticles(
     ctx.fillStyle = '#ffffff';
     ctx.fill();
 
-    // Data label on the leading particle of each flow
     if (particle.dataLabel && !labeledFlows.has(particle.flowName)) {
       labeledFlows.add(particle.flowName);
       ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -107,7 +91,6 @@ function drawParticles(
       ctx.closePath();
       ctx.fill();
 
-      // Text
       ctx.fillStyle = '#ffffff';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -124,10 +107,6 @@ export interface Transform {
   offsetY: number;
 }
 
-/**
- * Compute the diagram-to-canvas transform given canvas size, layout size,
- * optional pan (canvas pixels), and optional user zoom (multiplier on auto-fit scale).
- */
 export function computeTransform(
   canvasWidth: number,
   canvasHeight: number,
@@ -146,7 +125,6 @@ export function computeTransform(
   return { scale, offsetX, offsetY };
 }
 
-/** Convert canvas (CSS pixel) coordinates to diagram coordinates */
 export function canvasToDiagram(
   cx: number, cy: number, transform: Transform,
 ): { x: number; y: number } {
@@ -156,32 +134,26 @@ export function canvasToDiagram(
   };
 }
 
-/** Draw the export frame overlay in diagram-coord space. `scale` is the
- * effective on-screen scale so we can keep stroke widths constant in pixels. */
 function drawExportFrame(
   ctx: CanvasRenderingContext2D,
   frame: { x: number; y: number; width: number; height: number },
   scale: number,
 ) {
-  const inv = 1 / scale; // keep strokes/handles a constant screen size
+  const inv = 1 / scale;
 
   ctx.save();
-  // Dim outside the frame by drawing the frame area cleanly and the rest dimmed.
-  // Simpler: just stroke the frame and draw corner handles; skip dim for now.
   ctx.strokeStyle = '#3b82f6';
   ctx.lineWidth = 2 * inv;
   ctx.setLineDash([8 * inv, 6 * inv]);
   ctx.strokeRect(frame.x, frame.y, frame.width, frame.height);
   ctx.setLineDash([]);
 
-  // Label "EXPORT" at top-left corner
   ctx.fillStyle = '#3b82f6';
   ctx.font = `${11 * inv}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'bottom';
   ctx.fillText('EXPORT', frame.x + 4 * inv, frame.y - 4 * inv);
 
-  // Corner handles (little squares)
   const handleSize = 10 * inv;
   const corners = [
     [frame.x,               frame.y],
@@ -216,8 +188,9 @@ export function createAnimationLoop(
     panX?: number;
     panY?: number;
     userZoom?: number;
-    /** Export frame in diagram coords; draws a dashed overlay when present */
     exportFrame?: { x: number; y: number; width: number; height: number } | null;
+    /** Global collapse threshold in CSS px. Overridden per-package via `collapse_at:` in the DSL. */
+    collapseThresholdPx?: number;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -233,7 +206,6 @@ export function createAnimationLoop(
       return;
     }
 
-    // Handle DPI scaling
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * dpr;
@@ -245,26 +217,28 @@ export function createAnimationLoop(
       state.panX ?? 0, state.panY ?? 0, state.userZoom ?? 1,
     );
 
-    // Compute per-group fade based on the effective on-screen scale
-    const groupFade = computeGroupFades(currentLayout, scale);
+    // Per-frame: which groups are collapsed, and how to reroute edges.
+    const collapsedGroups = computeCollapsedGroups(
+      currentLayout,
+      scale,
+      state.collapseThresholdPx,
+    );
+    const effectiveEdges = computeEffectiveEdges(currentLayout, collapsedGroups);
 
     ctx.save();
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
-    // Draw static graph with group fade
-    drawGraph(ctx, currentLayout, { groupFade });
+    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges });
 
-    // Update and draw particles
     if (state.isPlaying && lastTime !== null) {
-      const deltaMs = Math.min(timestamp - lastTime, 50); // cap delta to avoid jumps
+      const deltaMs = Math.min(timestamp - lastTime, 50);
       particleSystem.update(deltaMs, state.playbackSpeed);
     }
     lastTime = timestamp;
 
-    drawParticles(ctx, particleSystem, currentLayout, groupFade);
+    drawParticles(ctx, particleSystem, effectiveEdges);
 
-    // Draw export frame overlay if present (in diagram coords, inside the ctx.save() transform)
     if (state.exportFrame) {
       drawExportFrame(ctx, state.exportFrame, scale);
     }

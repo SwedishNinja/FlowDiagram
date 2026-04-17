@@ -610,6 +610,212 @@ component "A" as a
       if (!result.ok) return;
       expect(result.document.groups).toEqual([]);
     });
+
+    it('supports nested packages with parentGroup tracking', () => {
+      const input = `@startuml
+package "Region" as region {
+  component "Edge" as edge
+  package "DC" as dc {
+    component "Auth" as auth
+    component "DB" as db
+    auth -> db as q1 : query
+  }
+  edge -> auth as link
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Both groups recorded, inner one points at outer as parent
+      const region = result.document.groups.find(g => g.id === 'region')!;
+      const dc = result.document.groups.find(g => g.id === 'dc')!;
+      expect(region.parentGroup).toBeUndefined();
+      expect(dc.parentGroup).toBe('region');
+
+      // Outer group's children include the inner group id AND direct components
+      expect(region.children).toContain('edge');
+      expect(region.children).toContain('dc');
+
+      // Components sit under their immediate container
+      const auth = result.document.components.find(c => c.id === 'auth');
+      const edge = result.document.components.find(c => c.id === 'edge');
+      expect(auth?.parentGroup).toBe('dc');
+      expect(edge?.parentGroup).toBe('region');
+    });
+
+    it('parses collapse_at property on a package', () => {
+      const input = `@startuml
+package "Backend" as backend {
+  collapse_at: 180px
+  component "Auth" as auth
+  component "DB" as db
+  auth -> db as q
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const backend = result.document.groups.find(g => g.id === 'backend')!;
+      expect(backend.collapseAtPx).toBe(180);
+    });
+
+    it('leaves collapseAtPx undefined when omitted', () => {
+      const input = `@startuml
+package "X" as x {
+  component "A" as a
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.document.groups[0]!.collapseAtPx).toBeUndefined();
+    });
+
+    it('supports package references: referenced package moves under referencer', () => {
+      const input = `@startuml
+package "Services" as services {
+  component "Auth" as auth
+  component "Users" as users
+}
+
+package "Backend" as backend {
+  package services
+  component "Cache" as cache
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const services = result.document.groups.find(g => g.id === 'services')!;
+      const backend = result.document.groups.find(g => g.id === 'backend')!;
+
+      // services is now nested under backend, not at root
+      expect(services.parentGroup).toBe('backend');
+      expect(backend.parentGroup).toBeUndefined();
+
+      // backend's children include the referenced services group
+      expect(backend.children).toContain('services');
+      expect(backend.children).toContain('cache');
+
+      // Components keep their immediate parent
+      const auth = result.document.components.find(c => c.id === 'auth');
+      expect(auth?.parentGroup).toBe('services');
+    });
+
+    it('supports forward references (reference before declaration in source)', () => {
+      const input = `@startuml
+package "Outer" as outer {
+  package inner
+}
+
+package "Inner" as inner {
+  component "X" as x
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const inner = result.document.groups.find(g => g.id === 'inner')!;
+      expect(inner.parentGroup).toBe('outer');
+    });
+
+    it('parses a package color on the header line', () => {
+      const input = `@startuml
+package "Backend" as backend #3b82f6 {
+  component "Auth" as auth
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const backend = result.document.groups.find(g => g.id === 'backend')!;
+      expect(backend.color).toBe('3b82f6');
+    });
+
+    it('parses @stage blocks with nested flows, after:, repeat:', () => {
+      const input = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+b -> a as c2
+
+@stage login
+  @flow l1 on c1
+    data: "req"
+@end_stage
+
+@stage respond
+  after: login
+  repeat: true
+  @flow r1 on c2
+    data: "resp"
+@end_stage
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.document.stages).toHaveLength(2);
+      const login = result.document.stages.find(s => s.name === 'login')!;
+      const respond = result.document.stages.find(s => s.name === 'respond')!;
+      expect(login.after).toEqual([]);
+      expect(login.repeat).toBe(false);
+      expect(login.flowNames).toEqual(['l1']);
+      expect(respond.after).toEqual(['login']);
+      expect(respond.repeat).toBe(true);
+      expect(respond.flowNames).toEqual(['r1']);
+
+      // Flows are tagged with their stage.
+      const l1 = result.document.flows.find(f => f.name === 'l1')!;
+      const r1 = result.document.flows.find(f => f.name === 'r1')!;
+      expect(l1.stage).toBe('login');
+      expect(r1.stage).toBe('respond');
+    });
+
+    it('errors on stage cycle', () => {
+      const input = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage s1
+  after: s2
+  @flow f1 on c1
+@end_stage
+
+@stage s2
+  after: s1
+  @flow f2 on c1
+@end_stage
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toMatch(/[Cc]ircular/);
+    });
+
+    it('errors when referencing an unknown package', () => {
+      const input = `@startuml
+package "Outer" as outer {
+  package nonexistent
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toMatch(/nonexistent/);
+    });
   });
 
   describe('positions', () => {

@@ -4,6 +4,7 @@ export interface FlowDocument {
   connections: ConnectionNode[];
   flows: FlowNode[];
   groups: GroupNode[];
+  stages: StageNode[];
   /** Component position overrides by alias (from @positions block) */
   positions: Record<string, { x: number; y: number }>;
 }
@@ -21,7 +22,14 @@ export interface ComponentNode {
 export interface GroupNode {
   id: string;
   displayName: string;
-  children: string[];   // component aliases inside this group
+  /** Direct children: component aliases AND nested group IDs (in the order they appeared). */
+  children: string[];
+  /** ID of the containing group if this package is nested inside another. */
+  parentGroup?: string;
+  /** Per-package collapse threshold (on-screen width in CSS px). Undefined = inherit global default. */
+  collapseAtPx?: number;
+  /** Optional package color (hex without #, or named color). */
+  color?: string;
 }
 
 /** A named connection between two components */
@@ -45,6 +53,21 @@ export interface FlowNode {
   direction: 'forward' | 'reverse';  // forward = source->target, reverse = target->source
   color?: string;                     // override particle color (hex or named)
   after: string[];                    // flow names this depends on (empty = runs always)
+  /** When set, the flow belongs to a stage and follows its lifecycle. */
+  stage?: string;
+  /** True if the flow was declared with freq:/every: (repeats while its stage is running). */
+  hasRate?: boolean;
+}
+
+/** A stage — a named group of flows with shared lifecycle. */
+export interface StageNode {
+  name: string;
+  /** Names of stages that must reach a fresh completion before this one starts. */
+  after: string[];
+  /** When true, the stage auto-restarts after it completes. */
+  repeat: boolean;
+  /** Flow names that live in this stage. */
+  flowNames: string[];
 }
 
 // --- Layout result types ---
@@ -69,7 +92,14 @@ export interface LayoutNode {
 export interface LayoutGroup {
   id: string;
   displayName: string;
+  /** Direct children: component IDs + nested group IDs. */
   children: string[];
+  /** Parent group ID if this package is nested. */
+  parentGroup?: string;
+  /** Per-package collapse threshold (CSS px); undefined → use global default. */
+  collapseAtPx?: number;
+  /** Optional package color. */
+  color?: string;
   /** Bounding box (including a label band on top) */
   x: number;
   y: number;

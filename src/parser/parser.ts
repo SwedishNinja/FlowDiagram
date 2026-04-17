@@ -1,6 +1,6 @@
 // @ts-expect-error - generated JS file without types
 import { parse as peggyParse } from './generated.js';
-import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode } from '../types';
+import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode } from '../types';
 
 export interface ParseError {
   message: string;
@@ -40,6 +40,7 @@ interface RawParseResult {
   connections: RawConnection[];
   flows: RawFlow[];
   groups: GroupNode[];
+  stages?: StageNode[];
   positions: Record<string, { x: number; y: number }>;
 }
 
@@ -110,6 +111,50 @@ function validate(doc: FlowDocument): ParseError | null {
     }
   }
 
+  // Stage validation.
+  const stageNames = new Set(doc.stages.map(s => s.name));
+  for (const stage of doc.stages) {
+    for (const dep of stage.after) {
+      if (!stageNames.has(dep)) {
+        return {
+          message: `Stage "${stage.name}" depends on unknown stage "${dep}"`,
+          line: 0,
+          column: 0,
+        };
+      }
+    }
+  }
+
+  // Cycle detection on stage deps.
+  const stageVisited = new Set<string>();
+  const stageVisiting = new Set<string>();
+  const stageMap = new Map(doc.stages.map(s => [s.name, s]));
+
+  function stageHasCycle(name: string): boolean {
+    if (stageVisiting.has(name)) return true;
+    if (stageVisited.has(name)) return false;
+    stageVisiting.add(name);
+    const stage = stageMap.get(name);
+    if (stage) {
+      for (const dep of stage.after) {
+        if (stageHasCycle(dep)) return true;
+      }
+    }
+    stageVisiting.delete(name);
+    stageVisited.add(name);
+    return false;
+  }
+
+  for (const stage of doc.stages) {
+    if (stageHasCycle(stage.name)) {
+      return {
+        message: `Circular dependency detected involving stage "${stage.name}"`,
+        line: 0,
+        column: 0,
+      };
+    }
+  }
+
   return null;
 }
 
@@ -121,6 +166,7 @@ export function parse(input: string): ParseResult {
       connections: assignConnectionIds(raw.connections),
       flows: raw.flows.map(({ type: _, ...rest }) => rest as FlowNode),
       groups: raw.groups ?? [],
+      stages: raw.stages ?? [],
       positions: raw.positions ?? {},
     };
     const validationError = validate(document);

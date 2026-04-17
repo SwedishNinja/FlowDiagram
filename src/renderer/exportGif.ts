@@ -110,7 +110,7 @@ export async function exportGif(
     width = 1024,
     height = 768,
     duration = 6,
-    fps = 15,
+    fps = 30,
     background = 'white',
   } = options;
 

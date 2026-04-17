@@ -1,15 +1,26 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useFlowStore } from '../store/flowStore';
-import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram } from './animationLoop';
+import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
+import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
-import type { LayoutNode } from '../types';
+import type { LayoutNode, LayoutGroup } from '../types';
+
+const GROUP_LABEL_BAND_HEIGHT = 24;
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
 interface NodeDragState {
   kind: 'node';
   nodeId: string;
+  offsetX: number;
+  offsetY: number;
+}
+
+interface GroupDragState {
+  kind: 'group';
+  groupId: string;
+  // Pointer offset relative to the group's top-left at drag start (in diagram coords).
   offsetX: number;
   offsetY: number;
 }
@@ -41,7 +52,7 @@ interface FrameResizeDragState {
   startFrameH: number;
 }
 
-type DragState = NodeDragState | PanDragState | FrameMoveDragState | FrameResizeDragState;
+type DragState = NodeDragState | GroupDragState | PanDragState | FrameMoveDragState | FrameResizeDragState;
 
 const FRAME_BORDER_HIT_PX = 8;   // how close (canvas px) to frame border to count as border hit
 const FRAME_CORNER_HIT_PX = 14;  // corner hit radius
@@ -84,6 +95,7 @@ export default function FlowCanvas() {
   const controllerRef = useRef<AnimationController | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const movedThisSessionRef = useRef<Set<string>>(new Set());
+  const movedGroupsThisSessionRef = useRef<Set<string>>(new Set());
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const layout = useFlowStore((s) => s.layout);
@@ -102,6 +114,7 @@ export default function FlowCanvas() {
       panY: panRef.current.y,
       userZoom: zoomRef.current,
       exportFrame: useFlowStore.getState().showExportFrame ? useFlowStore.getState().exportFrame : null,
+      collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
     }));
 
     controllerRef.current = controller;
@@ -119,14 +132,78 @@ export default function FlowCanvas() {
     }
   }, [layout]);
 
-  const findNodeAt = useCallback((x: number, y: number): LayoutNode | null => {
+  const findNodeAt = useCallback((x: number, y: number, effectiveScale?: number): LayoutNode | null => {
     const current = useFlowStore.getState().layout;
     if (!current) return null;
+    // When we know the scale, skip nodes hidden inside a collapsed ancestor
+    // so clicks inside a collapsed package fall through to the group handle.
+    const collapsed = effectiveScale !== undefined
+      ? computeCollapsedGroups(current, effectiveScale, useFlowStore.getState().collapseThresholdPx)
+      : null;
+    const parentOf = new Map<string, string | undefined>();
+    if (collapsed) {
+      for (const g of current.groups) parentOf.set(g.id, g.parentGroup);
+    }
+    const hidden = (n: LayoutNode): boolean => {
+      if (!collapsed) return false;
+      let cursor: string | undefined = n.parentGroup;
+      while (cursor !== undefined) {
+        if (collapsed.has(cursor)) return true;
+        cursor = parentOf.get(cursor);
+      }
+      return false;
+    };
     for (let i = current.nodes.length - 1; i >= 0; i--) {
       const n = current.nodes[i]!;
+      if (hidden(n)) continue;
       if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
         return n;
       }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Resolve a group that the pointer is currently grabbing. Rules:
+   *   • If a group is collapsed, its entire box is the grab zone.
+   *   • Otherwise, only the top label band.
+   *   • Innermost wins when multiple groups overlap (collapsed siblings
+   *     nested inside one another, for instance).
+   */
+  const findGroupHandleAt = useCallback((x: number, y: number, effectiveScale: number): LayoutGroup | null => {
+    const current = useFlowStore.getState().layout;
+    if (!current) return null;
+    const globalThreshold = useFlowStore.getState().collapseThresholdPx;
+    const collapsed = computeCollapsedGroups(current, effectiveScale, globalThreshold);
+
+    // Sort by depth descending — innermost first.
+    const parentOf = new Map<string, string | undefined>();
+    for (const g of current.groups) parentOf.set(g.id, g.parentGroup);
+    const sorted = [...current.groups].sort((a, b) => {
+      const depth = (id: string): number => {
+        let d = 0, c = parentOf.get(id);
+        while (c !== undefined) { d++; c = parentOf.get(c); }
+        return d;
+      };
+      return depth(b.id) - depth(a.id);
+    });
+
+    for (const g of sorted) {
+      if (x < g.x || x > g.x + g.width || y < g.y || y > g.y + g.height) continue;
+      // Skip groups that are entirely hidden (sit inside a collapsed ancestor).
+      let hiddenByAncestor = false;
+      let cursor = g.parentGroup;
+      while (cursor !== undefined) {
+        if (collapsed.has(cursor)) { hiddenByAncestor = true; break; }
+        cursor = parentOf.get(cursor);
+      }
+      if (hiddenByAncestor) continue;
+
+      if (collapsed.has(g.id)) {
+        return g; // entire box is the handle
+      }
+      // Expanded: only the label band counts.
+      if (y <= g.y + GROUP_LABEL_BAND_HEIGHT) return g;
     }
     return null;
   }, []);
@@ -234,10 +311,11 @@ export default function FlowCanvas() {
       }
     }
 
-    // 2. Node hit-test
+    // 2. Node hit-test — pass scale so hidden (collapsed-ancestor) nodes skip.
     const coords = getDiagramCoords(e);
     if (!coords) return;
-    const node = findNodeAt(coords.x, coords.y);
+    const tForNode = getTransform();
+    const node = findNodeAt(coords.x, coords.y, tForNode?.transform.scale);
 
     if (node) {
       dragRef.current = {
@@ -246,19 +324,38 @@ export default function FlowCanvas() {
         offsetX: coords.x - node.x,
         offsetY: coords.y - node.y,
       };
-    } else {
-      // 3. Pan
-      dragRef.current = {
-        kind: 'pan',
-        startClientX: e.clientX,
-        startClientY: e.clientY,
-        startPanX: panRef.current.x,
-        startPanY: panRef.current.y,
-      };
-      if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+      e.preventDefault();
+      return;
     }
+
+    // 3. Group handle hit-test (label band for expanded, full box for collapsed)
+    const t = getTransform();
+    if (t) {
+      const group = findGroupHandleAt(coords.x, coords.y, t.transform.scale);
+      if (group) {
+        dragRef.current = {
+          kind: 'group',
+          groupId: group.id,
+          offsetX: coords.x - group.x,
+          offsetY: coords.y - group.y,
+        };
+        if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 4. Pan
+    dragRef.current = {
+      kind: 'pan',
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startPanX: panRef.current.x,
+      startPanY: panRef.current.y,
+    };
+    if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [findNodeAt, getDiagramCoords, getFrameInCanvas]);
+  }, [findNodeAt, findGroupHandleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -269,7 +366,7 @@ export default function FlowCanvas() {
     const cy = e.clientY - rect.top;
 
     if (!drag) {
-      // Hover cursor: frame-aware
+      // Hover cursor: frame-aware, then node, then group handle, else pan.
       const frameCanvas = getFrameInCanvas();
       if (frameCanvas) {
         const hit = hitTestFrame(cx, cy, frameCanvas);
@@ -277,8 +374,15 @@ export default function FlowCanvas() {
         if (hit) { canvas.style.cursor = CORNER_TO_CURSOR[hit]; return; }
       }
       const coords = getDiagramCoords(e);
-      if (coords && findNodeAt(coords.x, coords.y)) canvas.style.cursor = 'grab';
-      else canvas.style.cursor = 'grab';
+      if (coords) {
+        const t = getTransform();
+        if (findNodeAt(coords.x, coords.y, t?.transform.scale)) { canvas.style.cursor = 'grab'; return; }
+        if (t && findGroupHandleAt(coords.x, coords.y, t.transform.scale)) {
+          canvas.style.cursor = 'grab';
+          return;
+        }
+      }
+      canvas.style.cursor = 'grab';
       return;
     }
 
@@ -339,13 +443,29 @@ export default function FlowCanvas() {
       return;
     }
 
-    // Node drag
     const coords = getDiagramCoords(e);
     if (!coords) return;
     const currentLayout = useFlowStore.getState().layout;
     const ast = useFlowStore.getState().ast;
     if (!currentLayout || !ast) return;
 
+    if (drag.kind === 'group') {
+      const group = currentLayout.groups.find(g => g.id === drag.groupId);
+      if (!group) return;
+      const newX = coords.x - drag.offsetX;
+      const newY = coords.y - drag.offsetY;
+      const dx = newX - group.x;
+      const dy = newY - group.y;
+      if (dx === 0 && dy === 0) return;
+      translateGroupSubtree(group.id, dx, dy, currentLayout);
+      // Outer ancestors may need to grow/shrink to contain the moved subtree.
+      refitAncestorGroups(group.id, currentLayout);
+      movedGroupsThisSessionRef.current.add(group.id);
+      canvas.style.cursor = 'grabbing';
+      return;
+    }
+
+    // Node drag
     const node = currentLayout.nodes.find(n => n.id === drag.nodeId);
     if (!node) return;
 
@@ -356,6 +476,10 @@ export default function FlowCanvas() {
 
     const connectionMap = new Map(ast.connections.map(c => [c.id, { source: c.source, target: c.target }]));
     recomputeEdgesForNodes(currentLayout, new Set([drag.nodeId]), connectionMap);
+
+    // Grow/shrink the containing package (and its ancestors) so the box
+    // always fits its children.
+    refitAncestorGroups(drag.nodeId, currentLayout);
 
     canvas.style.cursor = 'grabbing';
   }, [findNodeAt, getDiagramCoords, getFrameInCanvas, getTransform]);
@@ -369,7 +493,7 @@ export default function FlowCanvas() {
 
     if (drag.kind === 'pan' || drag.kind === 'frame-move' || drag.kind === 'frame-resize') return;
 
-    // Commit moved node positions to source text
+    // Commit moved node + group positions to source text.
     const currentLayout = useFlowStore.getState().layout;
     const ast = useFlowStore.getState().ast;
     const sourceText = useFlowStore.getState().sourceText;
@@ -377,15 +501,53 @@ export default function FlowCanvas() {
     if (!currentLayout || !ast) return;
 
     const positions: Record<string, { x: number; y: number }> = { ...ast.positions };
-    for (const nodeId of movedThisSessionRef.current) {
-      const node = currentLayout.nodes.find(n => n.id === nodeId);
-      if (node) {
-        positions[nodeId] = {
-          x: node.x + node.width / 2,
-          y: node.y + node.height / 2,
-        };
+
+    // @positions stores ABSOLUTE CENTER coordinates. When a package is
+    // dragged, we write entries for the package AND every descendant that
+    // rode along with it. That way each element independently pins its
+    // absolute position and auto-resize can't shift anything on reload.
+    const groupById = new Map(currentLayout.groups.map(g => [g.id, g]));
+
+    // Expand every moved group into its descendant subtree.
+    const parentOf = new Map<string, string | undefined>();
+    for (const n of currentLayout.nodes) parentOf.set(n.id, n.parentGroup);
+    for (const g of currentLayout.groups) parentOf.set(g.id, g.parentGroup);
+    const isDescendantOf = (id: string, ancestor: string) => {
+      let cursor = parentOf.get(id);
+      while (cursor !== undefined) {
+        if (cursor === ancestor) return true;
+        cursor = parentOf.get(cursor);
+      }
+      return false;
+    };
+    for (const groupId of movedGroupsThisSessionRef.current) {
+      for (const n of currentLayout.nodes) {
+        if (isDescendantOf(n.id, groupId)) movedThisSessionRef.current.add(n.id);
+      }
+      for (const g of currentLayout.groups) {
+        if (isDescendantOf(g.id, groupId)) movedGroupsThisSessionRef.current.add(g.id);
       }
     }
+
+    for (const nodeId of movedThisSessionRef.current) {
+      const node = currentLayout.nodes.find(n => n.id === nodeId);
+      if (!node) continue;
+      positions[nodeId] = {
+        x: node.x + node.width / 2,
+        y: node.y + node.height / 2,
+      };
+    }
+    for (const groupId of movedGroupsThisSessionRef.current) {
+      const group = groupById.get(groupId);
+      if (!group) continue;
+      positions[groupId] = {
+        x: group.x + group.width / 2,
+        y: group.y + group.height / 2,
+      };
+    }
+
+    movedThisSessionRef.current.clear();
+    movedGroupsThisSessionRef.current.clear();
 
     const updated = updatePositionsInSource(sourceText, positions);
     if (updated !== sourceText) setSourceText(updated);
@@ -401,7 +563,7 @@ export default function FlowCanvas() {
     if (!currentLayout) return;
     const t = computeTransform(rect.width, rect.height, currentLayout, panRef.current.x, panRef.current.y, zoomRef.current);
     const diag = canvasToDiagram(cx, cy, t);
-    if (findNodeAt(diag.x, diag.y)) return;
+    if (findNodeAt(diag.x, diag.y, t.scale)) return;
     panRef.current = { x: 0, y: 0 };
     zoomRef.current = 1;
   }, [findNodeAt]);

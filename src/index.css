@@ -1,3 +1,64 @@
+/* -----------------------------------------------------------------------
+   FlowDiagram — editorial developer-tool aesthetic
+   Serif wordmark (Instrument Serif) + monospace UI (JetBrains Mono)
+   Dark chrome, warm-light canvas, electric lime accent.
+------------------------------------------------------------------------- */
+
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap');
+
+:root {
+  /* Surfaces */
+  --surface-0: #09090b;   /* deepest — page bg if ever visible */
+  --surface-1: #0a0a0b;   /* top bar */
+  --surface-2: #111114;   /* editor / sidebar */
+  --surface-3: #18181b;   /* toolbar */
+  --surface-4: #1f1f23;   /* hover */
+  --surface-canvas: #fafaf7;
+
+  /* Lines */
+  --line-faint: #1f1f23;
+  --line: #27272a;
+  --line-strong: #3f3f46;
+
+  /* Ink */
+  --ink-1: #fafafa;       /* highest-contrast text */
+  --ink-2: #d4d4d8;       /* body */
+  --ink-3: #a1a1aa;       /* secondary */
+  --ink-4: #71717a;       /* tertiary / labels */
+  --ink-5: #52525b;       /* faint */
+
+  /* Ink on light canvas */
+  --ink-canvas-1: #18181b;
+  --ink-canvas-2: #52525b;
+
+  /* Accent — the "particle" signal */
+  --accent: #d4ff3a;
+  --accent-dim: #a3cc2e;
+  --accent-glow: rgba(212, 255, 58, 0.18);
+
+  /* Semantic */
+  --danger: #f87171;
+  --danger-bg: #2a1515;
+  --danger-line: #7f1d1d;
+
+  /* Fonts */
+  --font-serif: 'Instrument Serif', 'Times New Roman', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Type scale */
+  --fs-micro: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-base: 13px;
+
+  /* Radius */
+  --r-sm: 3px;
+  --r-md: 5px;
+
+  /* Motion */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -10,20 +71,315 @@ html, body, #root {
 }
 
 body {
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-mono);
+  font-size: var(--fs-base);
+  color: var(--ink-2);
+  background: var(--surface-0);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'calt' 1, 'liga' 0, 'ss01' 1;
 }
 
 button {
+  font-family: inherit;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: background-color 120ms var(--ease), color 120ms var(--ease),
+              border-color 120ms var(--ease), opacity 120ms var(--ease),
+              box-shadow 180ms var(--ease);
 }
 
-button:hover {
-  opacity: 0.85;
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
-button:active {
-  opacity: 0.7;
+input {
+  font-family: inherit;
 }
+
+/* ------------------------------------------------------------------ */
+/* Subtle grain — gives dark surfaces tactile depth                    */
+/* ------------------------------------------------------------------ */
+
+.fd-grain {
+  position: relative;
+}
+
+.fd-grain::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1   0 0 0 0 1   0 0 0 0 1   0 0 0 0.08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* ------------------------------------------------------------------ */
+/* Reusable UI atoms                                                   */
+/* ------------------------------------------------------------------ */
+
+.fd-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.fd-btn:hover:not(:disabled) {
+  background: var(--surface-4);
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+.fd-btn--ghost {
+  border-color: transparent;
+}
+
+.fd-btn--ghost:hover:not(:disabled) {
+  background: var(--surface-4);
+  border-color: var(--line);
+}
+
+.fd-btn--primary {
+  background: var(--ink-1);
+  color: var(--surface-0);
+  border-color: var(--ink-1);
+  font-weight: 600;
+}
+
+.fd-btn--primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0a0b;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.fd-btn--playing {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow), inset 0 0 12px rgba(212, 255, 58, 0.08);
+}
+
+.fd-btn--playing:hover:not(:disabled) {
+  background: var(--accent);
+  color: #0a0a0b;
+  border-color: var(--accent);
+}
+
+.fd-btn--accent {
+  background: var(--accent);
+  color: #0a0a0b;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.fd-btn--accent:hover:not(:disabled) {
+  background: #e2ff5a;
+  border-color: #e2ff5a;
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.fd-btn--toggle-on {
+  background: var(--surface-4);
+  color: var(--ink-1);
+  border-color: var(--line-strong);
+}
+
+/* Segmented speed control */
+.fd-seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  height: 26px;
+}
+
+.fd-seg button {
+  background: transparent;
+  color: var(--ink-4);
+  border: none;
+  border-right: 1px solid var(--line);
+  padding: 0 9px;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  height: 100%;
+}
+
+.fd-seg button:last-child { border-right: none; }
+
+.fd-seg button:hover:not([data-active='true']) {
+  background: var(--surface-4);
+  color: var(--ink-2);
+}
+
+.fd-seg button[data-active='true'] {
+  background: var(--ink-1);
+  color: var(--surface-0);
+  font-weight: 600;
+}
+
+/* Numeric input */
+.fd-num {
+  width: 44px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--surface-2);
+  color: var(--ink-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+
+.fd-num:focus {
+  border-color: var(--accent-dim);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.fd-num::-webkit-inner-spin-button,
+.fd-num::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Hairline divider used in toolbar */
+.fd-div {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* Small-caps section label */
+.fd-label {
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+}
+
+/* Status dot */
+.fd-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fd-dot--live {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  animation: fd-pulse 1.6s var(--ease) infinite;
+}
+
+.fd-dot--idle {
+  background: var(--ink-5);
+}
+
+@keyframes fd-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.85); }
+}
+
+/* Sidebar file row */
+.fd-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 14px 5px 13px;
+  background: transparent;
+  color: var(--ink-3);
+  border: none;
+  border-left: 2px solid transparent;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 120ms var(--ease), background-color 120ms var(--ease),
+              border-color 120ms var(--ease);
+}
+
+.fd-file:hover:not([data-active='true']) {
+  background: var(--surface-3);
+  color: var(--ink-2);
+}
+
+.fd-file[data-active='true'] {
+  background: var(--surface-3);
+  color: var(--ink-1);
+  border-left-color: var(--accent);
+}
+
+.fd-file-mark {
+  color: var(--ink-5);
+  font-size: 9px;
+}
+
+.fd-file[data-active='true'] .fd-file-mark {
+  color: var(--accent);
+}
+
+/* Ghost icon button (sidebar header) */
+.fd-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  color: var(--ink-4);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+
+.fd-icon-btn:hover {
+  background: var(--surface-4);
+  color: var(--ink-1);
+  border-color: var(--line);
+}
+
+/* Wordmark */
+.fd-wordmark {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--ink-1);
+  letter-spacing: -0.01em;
+}
+
+.fd-wordmark-accent {
+  color: var(--accent);
+}
+
+/* Scrollbars — thin, monochrome */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--line-strong); background-clip: padding-box; border: 2px solid transparent; }

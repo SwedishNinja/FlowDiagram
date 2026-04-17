@@ -49,10 +49,10 @@ flowdiagram/
       layoutEngine.ts     # ELK wrapper, group bounds, edge routing
       recomputeEdges.ts   # Live edge rerouting during node drag
     renderer/
-      FlowCanvas.tsx      # Canvas React component, pointer/wheel handling
-      animationLoop.ts    # rAF loop, transform, group fade, export frame overlay
-      drawGraph.ts        # Static scene drawing (nodes, edges, groups, labels)
-      particles.ts        # Particle emission + dependency triggering + fade
+      FlowCanvas.tsx      # Canvas React component; pointer/wheel handling, group drag, hidden-node hit-test
+      animationLoop.ts    # rAF loop, transform, collapse detection, export frame overlay
+      drawGraph.ts        # Static scene drawing (nodes, edges, groups, labels, parallel-edge fan-out)
+      particles.ts        # Particle emission + flow dependencies + stage lifecycle
       pathUtils.ts        # Point-at-progress along polylines
       colorUtils.ts       # Named + hex color normalization
       exportGif.ts        # GIF rendering pipeline
@@ -79,14 +79,20 @@ component "API Gateway" as gw
 component "Auth Service" as auth
 
 package "Backend" as backend {
-  component "User DB" as db
+  collapse_at: 180px
   component "Cache" as cache
-  auth -> db as db_conn : query user
   auth -> cache as cache_conn : check session
 
-  @flow internal_lookup on db_conn
-    every: 200ms
-    data: "SELECT *"
+  package "Data" as data {
+    component "User DB" as db
+    component "Replica" as replica
+    auth -> db as db_conn : query user
+    db -> replica as repl_conn : replicate
+
+    @flow internal_lookup on db_conn
+      every: 200ms
+      data: "SELECT *"
+  }
 }
 
 gw -> auth as auth_conn : authenticate
@@ -115,9 +121,9 @@ auth -> gw as result_conn : auth result
 - **Connection**: `source -> target as conn_name : label`
   - Arrows: `->` solid, `-->` longer, `..>` dotted, `<->` bidirectional
   - `as conn_name` is required if the connection is referenced by a flow
-- **Package**: `package "Name" as alias { ... }` — groups components. Can contain components, connections, and `@flow` blocks. Visually renders a dashed boundary around members.
+- **Package**: `package "Name" as alias [#color] { ... }` — groups components. Can contain components, connections, `@flow` blocks, **nested packages** to any depth, and **references to other packages** (`package <alias>` — pulls a package declared elsewhere into this subtree). A package can be referenced by at most one parent. References may be forward — the referenced package doesn't have to be declared yet. Optional hex `#color` on the header tints the border + fill. Optional `collapse_at: Npx` property line (see "Collapsing" below). **Packages auto-resize to fit their contents** — dragging a component or nested package beyond the box grows the parent automatically.
 - **@flow**: see below
-- **@positions**: center coordinates for components (used by drag-to-move persistence). One entry per line: `alias: x, y`
+- **@positions**: absolute center coordinates for components AND packages (used by drag-to-move persistence). One entry per line: `alias: x, y`. When a package is dragged, entries are written for the package plus every descendant that rode along — each element independently pins its absolute location so auto-resize can't shift anything on reload.
 - **Comments**: `' single line` or `/' multi-line '/`
 
 ### @flow block properties
@@ -144,22 +150,65 @@ auth -> gw as result_conn : auth result
 
 **Reverse flows** (`direction: reverse`) spawn particles at the target end of the connection and travel to the source — useful for request/response patterns on a single connection.
 
+### @stage blocks (scenario grouping)
+
+Group flows into lifecycle stages. Useful when your scenario has phases — a login exchange completes, then a data sync begins, then the UI updates.
+
+```
+@stage login
+  @flow post_login on auth_conn
+    data: "POST /login"
+  @flow token on result_conn
+    direction: reverse
+    after: post_login
+@end_stage
+
+@stage sync
+  after: login
+  @flow fetch on db_conn
+    data: "SELECT *"
+@end_stage
+
+@stage render
+  after: sync
+  repeat: true
+  @flow update_ui on ui_conn
+    data: "html"
+@end_stage
+```
+
+Stage semantics:
+
+- **Lifecycle**: `idle → running → completed`.
+- **Starts**: a stage with no `after:` starts immediately on init. A stage with `after: a, b, c` starts when *all* listed stages have a fresh completion to consume (same AND-semantics as flow `after:`).
+- **Completes**: when every flow in the stage has had at least one particle arrive in the current run.
+- **Once per initiation**: flows inside a stage that have neither `every:`/`freq:` nor `after:` fire exactly one particle per stage run.
+- **Repeating flows inside stages**: flows with `every:`/`freq:` continue emitting while their stage is `running` (and pause when it's not).
+- **Dependent flows inside stages**: `after:` still triggers per upstream arrival, within the stage run. Upstream counters baseline on each stage restart so you don't get a retroactive burst.
+- **`repeat: true`**: the stage re-enters `running` after completing, cascading through dependents. Great for looping scenarios.
+- **Flows outside any stage**: run continuously — backwards compatible with diagrams that don't use stages.
+
 ## Interaction
 
 - **Drag a component** → reposition it; `@positions` block is auto-written back to source text
+- **Drag a package** (grab the top label band, or any point on a collapsed package) → moves the whole subtree as a rigid unit; child layout is preserved. `@positions` entries are written for the package and every descendant that moved.
 - **Drag empty canvas** → pan the view
 - **Mouse wheel** → zoom in/out centered on cursor (0.2x to 5x)
 - **Double-click empty** → reset pan + zoom
 - **Show Frame** (toolbar) → dashed blue rectangle defines the export viewport. Drag border to move, drag corners to resize.
+- **Toolbar controls**: Play/Pause, Speed (0.25×–4×), Collapse threshold (global), Duration + FPS for GIF export, Frame toggle, Export GIF.
 - **Edit source text** → live parse (300ms debounce) → re-layout → re-render. Parse errors underline the offending line in red.
 
 ## Key Design Decisions
 
 - **Named flows, not step numbers.** Flows are independent entities with dependencies (`after:`). One upstream arrival fires one downstream particle. This models request/response and fan-out patterns naturally.
 - **Connections and flows separate.** A connection is static topology (`gw -> auth`); a flow is dynamic behavior (what data, when, how often). One connection can have multiple flows.
-- **@positions override ELK, edges reroute.** ELK lays out everything, then `@positions` entries override coordinates. Edges touching overridden nodes are redrawn as straight lines to node borders.
-- **Group fade based on rendered size.** When a group is below ~200px wide on screen, its internal components and flow particles fade out. Above ~360px, fully visible. Group outline is always shown.
+- **@positions override ELK, edges reroute.** ELK lays out everything, then `@positions` entries override coordinates (absolute centers). Edges touching overridden nodes are redrawn as straight lines to node borders.
+- **Packages auto-resize to fit contents.** After overrides are applied, every group is refit to the union of its children + padding + label band. Dragging a child outside the package grows the package in real time; dragging back in shrinks it. Works across nesting depth.
+- **Packages collapse at a zoom threshold.** When a package's on-screen width falls below a threshold, its contents hide and the package itself renders as a solid colored box. Flows that crossed the boundary reroute to the package border automatically; flows entirely inside the collapsed region are suppressed. Threshold is global (toolbar control, default 200 px) unless a package overrides it with `collapse_at: Npx`. Nested packages inherit collapse from any collapsed ancestor.
+- **Parallel edges fan out when rerouted.** Multiple connections that all reroute to the same pair of collapsed containers get a perpendicular offset so each line (and its particles) stays visible instead of stacking.
 - **Particle arrival counters, not flags.** A dependent flow consumes one arrival per spawn. This prevents "more pongs than pings" — every response is causally tied to a request.
+- **Stages for scenario phases.** `@stage` blocks group flows into a lifecycle. Stages start when their `after:` deps have a fresh completion; complete when every flow inside has at least one particle arrival; optionally repeat. Flows outside any stage run continuously — full backwards compatibility.
 
 ## Electron-specific Features
 
@@ -173,13 +222,14 @@ When running in Electron (`window.electronAPI` is present):
 
 ## Tests
 
-- `parser.test.ts` — syntax parsing for all features (components, connections, flows, groups, positions, colors, directions, errors)
-- `layout.test.ts` — ELK integration, topology variants
+- `parser.test.ts` — DSL parsing (components, connections, flows, groups, nested packages, package references, colors, `collapse_at`, stages, errors)
+- `layout.test.ts` — ELK integration, @positions overrides (absolute), group auto-resize, parallel-edge fan-out
+- `stages.test.ts` — stage lifecycle state machine, dependencies, repeat, once-per-initiation
 - `pathUtils.test.ts` — polyline math
 - `colorUtils.test.ts` — color normalization
 - `updatePositions.test.ts` — round-tripping `@positions` blocks
 
-64 tests total.
+84 tests total.
 
 ## Not Implemented (Possible Next Steps)
 
@@ -188,3 +238,5 @@ When running in Electron (`window.electronAPI` is present):
 - Pinch zoom on trackpad
 - Component shapes (database, queue, cloud, etc.) driven by `<<stereotype>>`
 - Example presets menu
+- Stage-tinted particles (color by stage so overlapping phases are easier to read)
+- Visual stage timeline in the toolbar

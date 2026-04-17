@@ -9,28 +9,68 @@ Body
     const connections = [];
     const flows = [];
     const groups = [];
+    const stages = [];
     const positions = {};
+    // Deferred references: each entry is { parentId, refId }. Resolved
+    // after all declarations so forward references work.
+    const referenceRequests = [];
+
+    // Recursively walk packages, tagging each component with its direct
+    // parent group and each nested group with its parent group.
+    function ingestPackage(pkg, parentGroupId) {
+      const childIds = [];
+      let collapseAtPx = undefined;
+
+      for (const child of pkg.entries) {
+        if (!child) continue;
+        if (child.type === 'component') {
+          components.push({ ...child, parentGroup: pkg.id });
+          childIds.push(child.id);
+        } else if (child.type === 'connection') {
+          connections.push(child);
+        } else if (child.type === 'flow') {
+          flows.push(child);
+        } else if (child.type === 'package') {
+          childIds.push(child.id);
+          ingestPackage(child, pkg.id);
+        } else if (child.type === 'packageRef') {
+          // Defer — the referenced package may be declared later.
+          referenceRequests.push({ parentId: pkg.id, refId: child.id });
+        } else if (child.type === 'packageProp') {
+          if (child.key === 'collapse_at') collapseAtPx = child.value;
+        }
+      }
+
+      groups.push({
+        id: pkg.id,
+        displayName: pkg.displayName,
+        color: pkg.color,
+        children: childIds,
+        parentGroup: parentGroupId,
+        collapseAtPx,
+      });
+    }
 
     function ingest(entry) {
       if (!entry) return;
       if (entry.type === 'component') components.push(entry);
       else if (entry.type === 'connection') connections.push(entry);
       else if (entry.type === 'flow') flows.push(entry);
-      else if (entry.type === 'package') {
-        // Tag the package's components with their parent group, then flatten.
-        const childIds = [];
-        for (const child of entry.entries) {
-          if (!child) continue;
-          if (child.type === 'component') {
-            components.push({ ...child, parentGroup: entry.id });
-            childIds.push(child.id);
-          } else if (child.type === 'connection') {
-            connections.push(child);
-          } else if (child.type === 'flow') {
-            flows.push(child);
-          }
+      else if (entry.type === 'package') ingestPackage(entry, undefined);
+      else if (entry.type === 'stage') {
+        // Tag each flow with its stage name and push to global flows.
+        const flowNames = [];
+        for (const flow of entry.flows) {
+          flow.stage = entry.name;
+          flows.push(flow);
+          flowNames.push(flow.name);
         }
-        groups.push({ id: entry.id, displayName: entry.displayName, children: childIds });
+        stages.push({
+          name: entry.name,
+          after: entry.after,
+          repeat: entry.repeat,
+          flowNames,
+        });
       }
       else if (entry.type === 'positions') {
         for (const p of entry.entries) {
@@ -40,37 +80,134 @@ Body
     }
 
     for (const entry of entries) ingest(entry);
-    return { components, connections, flows, groups, positions };
+
+    // Resolve references. A package referenced by another becomes a child
+    // of that other; its previous parent (often root) drops it.
+    const groupById = new Map(groups.map(g => [g.id, g]));
+    for (const { parentId, refId } of referenceRequests) {
+      const refGroup = groupById.get(refId);
+      if (!refGroup) {
+        throw new Error(`Package reference to unknown package "${refId}" inside "${parentId}"`);
+      }
+      // Update the referenced group's parent AND register it under the
+      // new parent's children list (unless already present).
+      refGroup.parentGroup = parentId;
+      const parentGroup = groupById.get(parentId);
+      if (parentGroup && !parentGroup.children.includes(refId)) {
+        parentGroup.children.push(refId);
+      }
+      // Cascade: components whose parentGroup is the referenced group
+      // stay pointing at that group. Nothing else changes — the tree
+      // rearranges via parentGroup pointers only.
+    }
+
+    return { components, connections, flows, groups, stages, positions };
   }
 
 // Entry handles newlines: single-line statements consume one NL,
-// block constructs (FlowBlock, PositionsBlock, Package) handle their own NLs.
+// block constructs (FlowBlock, PositionsBlock, Package, StageBlock)
+// handle their own NLs.
 Entry
   = pkg:Package { return pkg; }
+  / stage:StageBlock { return stage; }
   / pb:PositionsBlock { return pb; }
   / fb:FlowBlock { return fb; }
   / _ stmt:(Component / Connection / Comment) _ NL { return stmt; }
   / _ NL { return null; }
 
+// --- Stage ---
+// Groups flows into a stage. Stage lifecycle: idle → running → completed.
+// - Runs immediately if it has no `after:` deps (unless others pin it via deps).
+// - Runs when every `after:` stage has a fresh completion available.
+// - Each flow inside fires once per stage run, unless it has `every:`/`freq:`
+//   (then it loops while the stage is running).
+// - `repeat: true` restarts the stage after completion.
+//
+// @stage name
+//   after: other_stage_a, other_stage_b
+//   repeat: true
+//   @flow ...
+// @end_stage
+
+StageBlock
+  = _ "@stage" WS+ name:Alias _ NL
+    parts:StagePart*
+    _ "@end_stage" _ NL
+  {
+    const stage = { type: 'stage', name, after: [], repeat: false, flows: [] };
+    for (const part of parts) {
+      if (!part) continue;
+      if (part.type === 'flow') stage.flows.push(part);
+      else if (part.key === 'after') stage.after = part.value;
+      else if (part.key === 'repeat') stage.repeat = part.value;
+    }
+    return stage;
+  }
+
+StagePart
+  = fb:FlowBlock { return fb; }
+  / _ "after:" _ value:AfterList _ NL { return { key: 'after', value }; }
+  / _ "repeat:" _ value:BoolValue _ NL { return { key: 'repeat', value }; }
+  / _ Comment NL { return null; }
+  / _ NL { return null; }
+
+BoolValue
+  = "true"  { return true; }
+  / "false" { return false; }
+
 // --- Package (group) ---
+// Packages may contain components, connections, flows, NESTED packages,
+// and a `collapse_at: Npx` property line.
+//
 // package "Display Name" as alias {
+//   collapse_at: 180px
 //   component ...
-//   connection ...
+//   package "Nested" as nested {
+//     component ...
+//   }
 //   @flow ...
 // }
 
 Package
-  = _ "package" WS+ displayName:QuotedString WS+ "as" WS+ id:Alias _ "{" _ NL
+  = _ "package" WS+ displayName:QuotedString WS+ "as" WS+ id:Alias color:(_ "#" ColorValue)? _ "{" _ NL
     entries:PackageEntry*
     _ "}" _ NL
   {
-    return { type: 'package', id, displayName, entries };
+    return {
+      type: 'package',
+      id,
+      displayName,
+      color: color ? color[2] : undefined,
+      entries,
+    };
   }
 
 PackageEntry
-  = fb:FlowBlock { return fb; }
+  = pkg:Package { return pkg; }
+  / ref:PackageRef { return ref; }
+  / prop:PackageProp { return prop; }
+  / fb:FlowBlock { return fb; }
   / _ stmt:(Component / Connection / Comment) _ NL { return stmt; }
   / _ NL { return null; }
+
+// Reference form: `package <alias>` — pull a previously or later-declared
+// package into this package's subtree. Has NO quoted string and NO braces,
+// which disambiguates it from a Package declaration.
+PackageRef
+  = _ "package" WS+ id:Alias _ NL
+  { return { type: 'packageRef', id }; }
+
+// Package-level properties. Currently only `collapse_at: <N>px` is
+// recognised; other keys will produce a parse error so typos surface early.
+PackageProp
+  = _ "collapse_at:" _ value:PixelValue _ NL
+  { return { type: 'packageProp', key: 'collapse_at', value }; }
+
+PixelValue
+  = n:Number "px"
+  { return n; }
+  / n:Number
+  { return n; }
 
 // --- Components ---
 
@@ -152,6 +289,7 @@ FlowBlock
       direction: 'forward',
       color: undefined,
       after: [],
+      hasRate: false,
     };
     for (const prop of properties) {
       if (!prop) continue;
@@ -159,8 +297,12 @@ FlowBlock
       else if (prop.key === 'freq') {
         const perSecond = prop.value.unit === 's' ? prop.value.value : prop.value.value / 60;
         result.intervalMs = 1000 / Math.max(perSecond, 0.001);
+        result.hasRate = true;
       }
-      else if (prop.key === 'every') result.intervalMs = durationToMs(prop.value);
+      else if (prop.key === 'every') {
+        result.intervalMs = durationToMs(prop.value);
+        result.hasRate = true;
+      }
       else if (prop.key === 'traverse_time') result.traverseTimeMs = durationToMs(prop.value);
       else if (prop.key === 'start_delay') result.startDelayMs = durationToMs(prop.value);
       else if (prop.key === 'direction') result.direction = prop.value;

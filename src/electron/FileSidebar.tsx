@@ -27,15 +27,12 @@ export default function FileSidebar({ currentPath, onOpenFile }: FileSidebarProp
     }
   }, []);
 
-  // Load default directory on mount
   useEffect(() => {
     loadDir();
   }, [loadDir]);
 
-  // Refresh when the current file changes (its parent dir might have new content)
   useEffect(() => {
     if (currentPath) {
-      // Get parent directory
       const parentDir = currentPath.replace(/[/\\][^/\\]+$/, '');
       if (parentDir && parentDir !== dir) {
         loadDir(parentDir);
@@ -54,61 +51,96 @@ export default function FileSidebar({ currentPath, onOpenFile }: FileSidebarProp
     if (dir) loadDir(dir);
   };
 
+  // Last segment only — the full path lives in the tooltip
+  const dirShort = dir ? dir.split(/[/\\]/).filter(Boolean).slice(-2).join('/') : '';
+
   return (
-    <div style={{
-      width: '200px',
-      display: 'flex',
-      flexDirection: 'column',
-      borderRight: '1px solid #e2e8f0',
-      background: '#f8fafc',
-      fontSize: '12px',
-    }}>
-      <div style={{
-        padding: '8px 12px',
-        background: '#1e293b',
-        color: '#94a3b8',
-        fontWeight: 600,
-        letterSpacing: '0.05em',
+    <div
+      style={{
+        width: '216px',
         display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-      }}>
-        <span style={{ flex: 1 }}>FILES</span>
+        flexDirection: 'column',
+        borderRight: '1px solid var(--line)',
+        background: 'var(--surface-2)',
+      }}
+    >
+      {/* Header */}
+      <div
+        className="fd-grain"
+        style={{
+          padding: '14px 14px 12px',
+          background: 'var(--surface-1)',
+          borderBottom: '1px solid var(--line)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+        }}
+      >
+        <span className="fd-label" style={{ flex: 1 }}>Files</span>
         <button
           onClick={handleRefresh}
           title="Refresh"
-          style={sidebarIconButtonStyle}
-        >↻</button>
+          aria-label="Refresh"
+          className="fd-icon-btn"
+        >
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 12a9 9 0 0 1 15.5-6.3L21 8 M21 4v4h-4 M21 12a9 9 0 0 1-15.5 6.3L3 16 M3 20v-4h4" />
+          </svg>
+        </button>
         <button
           onClick={handlePickDir}
           title="Pick directory"
-          style={sidebarIconButtonStyle}
-        >📁</button>
+          aria-label="Pick directory"
+          className="fd-icon-btn"
+        >
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />
+          </svg>
+        </button>
       </div>
 
+      {/* Directory breadcrumb */}
       {dir && (
-        <div style={{
-          padding: '4px 12px',
-          color: '#64748b',
-          borderBottom: '1px solid #e2e8f0',
-          fontSize: '10px',
-          fontFamily: 'monospace',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          direction: 'rtl',
-          textAlign: 'left',
-        }}>
-          {dir}
+        <div
+          title={dir}
+          style={{
+            padding: '8px 14px',
+            color: 'var(--ink-4)',
+            borderBottom: '1px solid var(--line-faint)',
+            fontSize: 'var(--fs-micro)',
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.02em',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          <span style={{ color: 'var(--ink-5)' }}>↳</span>
+          <span>{dirShort}</span>
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      {/* File list */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '6px 0' }}>
         {loading && (
-          <div style={{ padding: '8px 12px', color: '#94a3b8' }}>Loading…</div>
+          <div style={{ padding: '8px 14px', color: 'var(--ink-5)', fontSize: 'var(--fs-xs)' }}>
+            Loading…
+          </div>
         )}
         {!loading && files.length === 0 && (
-          <div style={{ padding: '8px 12px', color: '#94a3b8' }}>No .flow files</div>
+          <div
+            style={{
+              padding: '14px',
+              color: 'var(--ink-5)',
+              fontSize: 'var(--fs-xs)',
+              lineHeight: 1.55,
+            }}
+          >
+            No <code style={{ color: 'var(--ink-4)' }}>.flow</code> files in this directory.
+          </div>
         )}
         {files.map((file) => {
           const isActive = file.path === currentPath;
@@ -116,24 +148,12 @@ export default function FileSidebar({ currentPath, onOpenFile }: FileSidebarProp
             <button
               key={file.path}
               onClick={() => onOpenFile(file.path)}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '6px 12px',
-                background: isActive ? '#e0f2fe' : 'transparent',
-                color: isActive ? '#0369a1' : '#334155',
-                border: 'none',
-                borderLeft: isActive ? '3px solid #0284c7' : '3px solid transparent',
-                cursor: 'pointer',
-                fontSize: '12px',
-                fontFamily: 'monospace',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
+              data-active={isActive}
+              className="fd-file"
+              title={file.path}
             >
-              {file.name}
+              <span className="fd-file-mark">{isActive ? '●' : '○'}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{file.name}</span>
             </button>
           );
         })}
@@ -141,12 +161,3 @@ export default function FileSidebar({ currentPath, onOpenFile }: FileSidebarProp
     </div>
   );
 }
-
-const sidebarIconButtonStyle: React.CSSProperties = {
-  background: 'transparent',
-  color: '#94a3b8',
-  border: 'none',
-  cursor: 'pointer',
-  fontSize: '14px',
-  padding: '0 4px',
-};

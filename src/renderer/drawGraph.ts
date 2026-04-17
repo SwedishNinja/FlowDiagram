@@ -10,8 +10,11 @@ const COLORS = {
   background: '#f8fafc',
   stereotypeText: '#6366f1',
   groupStroke: '#475569',
+  groupStrokeCollapsed: '#1e293b',
   groupFill: '#e2e8f0',
+  groupFillCollapsed: '#cbd5e1',
   groupLabel: '#334155',
+  groupLabelCollapsed: '#0f172a',
 };
 
 const NODE_RADIUS = 8;
@@ -19,8 +22,10 @@ const GROUP_RADIUS = 12;
 const ARROWHEAD_SIZE = 10;
 
 export interface DrawOptions {
-  /** Per-group opacity for the group's internal contents (0 = hidden, 1 = fully visible) */
-  groupFade?: Map<string, number>;
+  /** Set of group IDs that are currently collapsed (all contents hidden, external flows route to border). */
+  collapsedGroups?: Set<string>;
+  /** Effective edges by edge ID: rerouted points or `suppressed` when both endpoints resolve to the same container. */
+  effectiveEdges?: Map<string, { points: Point[]; suppressed: boolean }>;
   /** Background color (also used for edge-label backgrounds). Defaults to the live-canvas light gray. */
   background?: string;
 }
@@ -52,30 +57,91 @@ function resolveColor(color?: string): string {
   return color;
 }
 
-function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup) {
+function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed: boolean) {
   ctx.save();
   drawRoundedRect(ctx, group.x, group.y, group.width, group.height, GROUP_RADIUS);
-  ctx.fillStyle = COLORS.groupFill + '40'; // subtle fill
-  ctx.fill();
-  ctx.strokeStyle = COLORS.groupStroke;
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([6, 4]);
-  ctx.stroke();
-  ctx.setLineDash([]);
 
-  // Label in the top band
-  ctx.fillStyle = COLORS.groupLabel;
-  ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-  ctx.fillText(group.displayName, group.x + 10, group.y + 6);
+  const custom = group.color ? resolveColor(group.color) : undefined;
+
+  if (collapsed) {
+    // Collapsed: solid box (custom color if provided).
+    ctx.fillStyle = custom ?? COLORS.groupFillCollapsed;
+    ctx.fill();
+    ctx.strokeStyle = custom ? darkenColor(custom, 0.25) : COLORS.groupStrokeCollapsed;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  } else {
+    // Expanded: subtle tinted fill + SOLID colored border.
+    ctx.fillStyle = custom ? withAlpha(custom, 0.12) : (COLORS.groupFill + '40');
+    ctx.fill();
+    ctx.strokeStyle = custom ?? COLORS.groupStroke;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  // Label — centered when collapsed, top-left when expanded.
+  ctx.fillStyle = collapsed
+    ? (custom ? contrastingInk(custom) : COLORS.groupLabelCollapsed)
+    : COLORS.groupLabel;
+  if (collapsed) {
+    ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(group.displayName, group.x + group.width / 2, group.y + group.height / 2);
+  } else {
+    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillText(group.displayName, group.x + 10, group.y + 6);
+  }
   ctx.restore();
+}
+
+/** Parse `#rrggbb` or `rrggbb` into an {r,g,b} triple, or null. */
+function parseHex(c: string): { r: number; g: number; b: number } | null {
+  const m = c.replace(/^#/, '');
+  if (m.length === 3) {
+    return {
+      r: parseInt(m[0]! + m[0]!, 16),
+      g: parseInt(m[1]! + m[1]!, 16),
+      b: parseInt(m[2]! + m[2]!, 16),
+    };
+  }
+  if (m.length === 6) {
+    return {
+      r: parseInt(m.slice(0, 2), 16),
+      g: parseInt(m.slice(2, 4), 16),
+      b: parseInt(m.slice(4, 6), 16),
+    };
+  }
+  return null;
+}
+
+function withAlpha(color: string, alpha: number): string {
+  const rgb = parseHex(color);
+  if (!rgb) return color;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
+}
+
+function darkenColor(color: string, amount: number): string {
+  const rgb = parseHex(color);
+  if (!rgb) return color;
+  const k = 1 - amount;
+  return `rgb(${Math.round(rgb.r * k)}, ${Math.round(rgb.g * k)}, ${Math.round(rgb.b * k)})`;
+}
+
+/** Pick a dark or light ink that contrasts well with the given fill. */
+function contrastingInk(color: string): string {
+  const rgb = parseHex(color);
+  if (!rgb) return '#0f172a';
+  // Perceived luminance (sRGB weighted).
+  const lum = 0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b;
+  return lum > 155 ? '#0f172a' : '#f8fafc';
 }
 
 function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode) {
   const fill = resolveColor(node.color);
 
-  // Shadow
   ctx.shadowColor = 'rgba(0,0,0,0.08)';
   ctx.shadowBlur = 6;
   ctx.shadowOffsetX = 0;
@@ -122,8 +188,13 @@ function drawArrowhead(ctx: CanvasRenderingContext2D, to: Point, from: Point) {
   ctx.fill();
 }
 
-function drawEdge(ctx: CanvasRenderingContext2D, edge: LayoutEdge, background: string = COLORS.background) {
-  if (edge.points.length < 2) return;
+function drawEdge(
+  ctx: CanvasRenderingContext2D,
+  edge: LayoutEdge,
+  points: Point[],
+  background: string = COLORS.background,
+) {
+  if (points.length < 2) return;
 
   ctx.strokeStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
   ctx.lineWidth = 1.5;
@@ -135,28 +206,28 @@ function drawEdge(ctx: CanvasRenderingContext2D, edge: LayoutEdge, background: s
   }
 
   ctx.beginPath();
-  ctx.moveTo(edge.points[0]!.x, edge.points[0]!.y);
-  for (let i = 1; i < edge.points.length; i++) {
-    ctx.lineTo(edge.points[i]!.x, edge.points[i]!.y);
+  ctx.moveTo(points[0]!.x, points[0]!.y);
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i]!.x, points[i]!.y);
   }
   ctx.stroke();
   ctx.setLineDash([]);
 
-  const last = edge.points[edge.points.length - 1]!;
-  const prev = edge.points[edge.points.length - 2]!;
+  const last = points[points.length - 1]!;
+  const prev = points[points.length - 2]!;
   ctx.fillStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
   drawArrowhead(ctx, last, prev);
 
   if (edge.arrowStyle === 'bidirectional') {
-    const first = edge.points[0]!;
-    const second = edge.points[1]!;
+    const first = points[0]!;
+    const second = points[1]!;
     drawArrowhead(ctx, first, second);
   }
 
   if (edge.label) {
-    const midIdx = Math.floor(edge.points.length / 2);
-    const midPoint = edge.points[midIdx]!;
-    const prevPoint = edge.points[Math.max(0, midIdx - 1)]!;
+    const midIdx = Math.floor(points.length / 2);
+    const midPoint = points[midIdx]!;
+    const prevPoint = points[Math.max(0, midIdx - 1)]!;
 
     ctx.fillStyle = background;
     ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
@@ -175,7 +246,7 @@ function drawEdge(ctx: CanvasRenderingContext2D, edge: LayoutEdge, background: s
   }
 }
 
-/** Determine if an edge is "internal" to a group — both endpoints in the same group */
+/** Legacy: still exported because existing callers in animationLoop reference it. */
 export function edgeInternalGroup(edge: LayoutEdge, nodeGroup: Map<string, string | undefined>): string | null {
   const sg = nodeGroup.get(edge.source);
   const tg = nodeGroup.get(edge.target);
@@ -183,41 +254,253 @@ export function edgeInternalGroup(edge: LayoutEdge, nodeGroup: Map<string, strin
   return null;
 }
 
+/**
+ * Walk up the group tree to find the nearest visible ancestor. Returns
+ * the original ID if neither it nor any ancestor is collapsed. Returns
+ * the outermost collapsed ancestor otherwise (so connections reroute to
+ * the largest closed box, not an inner one).
+ */
+export function visibleAncestor(
+  id: string,
+  parentGroupOf: Map<string, string | undefined>,
+  collapsedGroups: Set<string>,
+): string {
+  // Walk all ancestors, tracking the outermost collapsed one.
+  let outermostCollapsed: string | null = null;
+  let cursor: string | undefined = id;
+  while (cursor !== undefined) {
+    if (collapsedGroups.has(cursor)) outermostCollapsed = cursor;
+    cursor = parentGroupOf.get(cursor);
+  }
+  return outermostCollapsed ?? id;
+}
+
+/** Border-intersection point helper (duplicated from layoutEngine for render-time use). */
+function pointOnRectBorder(
+  cx: number, cy: number, w: number, h: number,
+  tx: number, ty: number,
+): Point {
+  const dx = tx - cx;
+  const dy = ty - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const halfW = w / 2;
+  const halfH = h / 2;
+  const scale = Math.min(
+    halfW / Math.abs(dx || 1),
+    halfH / Math.abs(dy || 1),
+  );
+  return { x: cx + dx * scale, y: cy + dy * scale };
+}
+
+type Box = { x: number; y: number; width: number; height: number };
+
+/** Minimum perpendicular spacing between parallel rerouted edges, in diagram units. */
+const PARALLEL_EDGE_SPACING = 14;
+
+/**
+ * For each edge, resolve endpoints to their nearest visible ancestor and
+ * produce the polyline to render.
+ *
+ *   • Both endpoints resolve to the same container → suppressed.
+ *   • Neither endpoint remapped → keep the ELK-routed polyline.
+ *   • At least one endpoint remapped → straight border-to-border line.
+ *     When multiple such edges share the same unordered endpoint pair,
+ *     they are fanned out perpendicular to the center-line so each line
+ *     (and its particle trail) is visible. Fanout is symmetric around
+ *     the center-line; spacing auto-shrinks when the rectangle is too
+ *     narrow to accommodate the full spread.
+ */
+export function computeEffectiveEdges(
+  layout: LayoutResult,
+  collapsedGroups: Set<string>,
+): Map<string, { points: Point[]; suppressed: boolean }> {
+  const result = new Map<string, { points: Point[]; suppressed: boolean }>();
+
+  const parentOf = new Map<string, string | undefined>();
+  const boxById = new Map<string, Box>();
+
+  for (const n of layout.nodes) {
+    parentOf.set(n.id, n.parentGroup);
+    boxById.set(n.id, { x: n.x, y: n.y, width: n.width, height: n.height });
+  }
+  for (const g of layout.groups) {
+    parentOf.set(g.id, g.parentGroup);
+    boxById.set(g.id, { x: g.x, y: g.y, width: g.width, height: g.height });
+  }
+
+  // Pass 1: classify edges.
+  type Rerouted = { edgeId: string; srcVis: string; tgtVis: string };
+  const rerouted: Rerouted[] = [];
+
+  for (const edge of layout.edges) {
+    const srcVis = visibleAncestor(edge.source, parentOf, collapsedGroups);
+    const tgtVis = visibleAncestor(edge.target, parentOf, collapsedGroups);
+
+    if (srcVis === tgtVis) {
+      result.set(edge.id, { points: [], suppressed: true });
+      continue;
+    }
+
+    const sRemapped = srcVis !== edge.source;
+    const tRemapped = tgtVis !== edge.target;
+
+    if (!sRemapped && !tRemapped) {
+      result.set(edge.id, { points: edge.points, suppressed: false });
+      continue;
+    }
+
+    rerouted.push({ edgeId: edge.id, srcVis, tgtVis });
+  }
+
+  // Pass 2: group rerouted edges by unordered endpoint pair.
+  const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const byPair = new Map<string, Rerouted[]>();
+  for (const r of rerouted) {
+    const key = pairKey(r.srcVis, r.tgtVis);
+    const list = byPair.get(key);
+    if (list) list.push(r);
+    else byPair.set(key, [r]);
+  }
+
+  // Pass 3: emit each rerouted edge, fanning out when a group has siblings.
+  for (const group of byPair.values()) {
+    const n = group.length;
+
+    // Canonical direction: sort by ID so all edges in this pair share one
+    // perpendicular basis (avoids flipping sign based on each edge's direction).
+    const [firstId, secondId] = [group[0]!.srcVis, group[0]!.tgtVis].sort();
+    const firstBox = boxById.get(firstId!)!;
+    const secondBox = boxById.get(secondId!)!;
+    const cdx = (secondBox.x + secondBox.width / 2) - (firstBox.x + firstBox.width / 2);
+    const cdy = (secondBox.y + secondBox.height / 2) - (firstBox.y + firstBox.height / 2);
+    const len = Math.hypot(cdx, cdy) || 1;
+    const perpX = -cdy / len;
+    const perpY = cdx / len;
+
+    // Clamp total fanout width so it doesn't exceed ~70% of the narrower box.
+    const narrowest = Math.min(firstBox.width, firstBox.height, secondBox.width, secondBox.height);
+    const maxHalfSpread = narrowest * 0.35;
+    const requestedHalfSpread = ((n - 1) / 2) * PARALLEL_EDGE_SPACING;
+    const actualSpacing = requestedHalfSpread > maxHalfSpread && n > 1
+      ? (2 * maxHalfSpread) / (n - 1)
+      : PARALLEL_EDGE_SPACING;
+
+    // Stable per-edge order so offsets don't jitter frame-to-frame. Use the
+    // order they appear in layout.edges.
+    const orderedIndex = new Map<string, number>();
+    layout.edges.forEach((e, i) => orderedIndex.set(e.id, i));
+    group.sort((a, b) => (orderedIndex.get(a.edgeId)! - orderedIndex.get(b.edgeId)!));
+
+    group.forEach((r, i) => {
+      const offset = n === 1 ? 0 : (i - (n - 1) / 2) * actualSpacing;
+
+      const sBox = boxById.get(r.srcVis)!;
+      const tBox = boxById.get(r.tgtVis)!;
+      const scx = sBox.x + sBox.width / 2;
+      const scy = sBox.y + sBox.height / 2;
+      const tcx = tBox.x + tBox.width / 2;
+      const tcy = tBox.y + tBox.height / 2;
+
+      // Compute border points from the real centers first...
+      let start = pointOnRectBorder(scx, scy, sBox.width, sBox.height, tcx, tcy);
+      let end = pointOnRectBorder(tcx, tcy, tBox.width, tBox.height, scx, scy);
+
+      // ...then shift both perpendicular. Endpoints end up slightly off the
+      // border (within PARALLEL_EDGE_SPACING/2 px) — visually reads as
+      // multiple attachment points on the same face of the rectangle.
+      if (offset !== 0) {
+        start = { x: start.x + perpX * offset, y: start.y + perpY * offset };
+        end = { x: end.x + perpX * offset, y: end.y + perpY * offset };
+      }
+
+      result.set(r.edgeId, { points: [start, end], suppressed: false });
+    });
+  }
+
+  return result;
+}
+
+/**
+ * True if the node is inside any collapsed group (at any depth).
+ */
+function nodeIsHidden(
+  nodeId: string,
+  parentOf: Map<string, string | undefined>,
+  collapsedGroups: Set<string>,
+): boolean {
+  let cursor: string | undefined = parentOf.get(nodeId);
+  while (cursor !== undefined) {
+    if (collapsedGroups.has(cursor)) return true;
+    cursor = parentOf.get(cursor);
+  }
+  return false;
+}
+
+/**
+ * True if a group sits inside another collapsed group (so the outer
+ * container is already drawn on top and this inner group should not render).
+ */
+function groupIsHidden(
+  groupId: string,
+  parentOf: Map<string, string | undefined>,
+  collapsedGroups: Set<string>,
+): boolean {
+  let cursor: string | undefined = parentOf.get(groupId);
+  while (cursor !== undefined) {
+    if (collapsedGroups.has(cursor)) return true;
+    cursor = parentOf.get(cursor);
+  }
+  return false;
+}
+
 export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, options: DrawOptions = {}) {
-  const groupFade = options.groupFade;
+  const collapsedGroups = options.collapsedGroups ?? new Set<string>();
   const background = options.background ?? COLORS.background;
 
-  // Background (only paint if the caller hasn't cleared already — we always paint here)
+  // Background fill
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
-  // Build group membership lookup
-  const nodeGroup = new Map<string, string | undefined>();
-  for (const n of layout.nodes) nodeGroup.set(n.id, n.parentGroup);
+  // Build parent-of lookup (components + groups)
+  const parentOf = new Map<string, string | undefined>();
+  for (const n of layout.nodes) parentOf.set(n.id, n.parentGroup);
+  for (const g of layout.groups) parentOf.set(g.id, g.parentGroup);
 
-  // 1. Draw group outlines (always visible)
-  for (const group of layout.groups) {
-    drawGroup(ctx, group);
+  // 1. Groups, outermost first. Skip groups that live inside a collapsed ancestor.
+  // Sort so that outer groups draw before inner ones (stable by ascending depth).
+  const groupsByDepth = [...layout.groups].sort((a, b) => {
+    const da = depthOf(a.id, parentOf);
+    const db = depthOf(b.id, parentOf);
+    return da - db;
+  });
+  for (const group of groupsByDepth) {
+    if (groupIsHidden(group.id, parentOf, collapsedGroups)) continue;
+    const collapsed = collapsedGroups.has(group.id);
+    drawGroup(ctx, group, collapsed);
   }
 
-  // 2. Draw edges. Fade if internal to a fading group.
+  // 2. Edges — use effectiveEdges (rerouted + suppression info).
+  const effectiveEdges = options.effectiveEdges;
   for (const edge of layout.edges) {
-    const internalGroupId = edgeInternalGroup(edge, nodeGroup);
-    const fade = internalGroupId && groupFade ? (groupFade.get(internalGroupId) ?? 1) : 1;
-    if (fade <= 0.01) continue;
-    ctx.save();
-    ctx.globalAlpha = fade;
-    drawEdge(ctx, edge, background);
-    ctx.restore();
+    const eff = effectiveEdges?.get(edge.id);
+    if (eff?.suppressed) continue;
+    const points = eff?.points ?? edge.points;
+    drawEdge(ctx, edge, points, background);
   }
 
-  // 3. Draw nodes. Fade if inside a fading group.
+  // 3. Nodes — hide when inside a collapsed ancestor.
   for (const node of layout.nodes) {
-    const fade = node.parentGroup && groupFade ? (groupFade.get(node.parentGroup) ?? 1) : 1;
-    if (fade <= 0.01) continue;
-    ctx.save();
-    ctx.globalAlpha = fade;
+    if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
     drawNode(ctx, node);
-    ctx.restore();
   }
+}
+
+function depthOf(id: string, parentOf: Map<string, string | undefined>): number {
+  let depth = 0;
+  let cursor: string | undefined = parentOf.get(id);
+  while (cursor !== undefined) {
+    depth++;
+    cursor = parentOf.get(cursor);
+  }
+  return depth;
 }

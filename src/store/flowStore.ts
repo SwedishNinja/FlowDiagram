@@ -33,6 +33,12 @@ export interface FlowStore {
   showExportFrame: boolean;
   setShowExportFrame: (v: boolean) => void;
   setExportFrame: (frame: { x: number; y: number; width: number; height: number } | null) => void;
+
+  // Collapse threshold: when a package renders narrower than this (CSS px),
+  // its contents hide and flows reroute to its border. Overridden per-package
+  // via the DSL `collapse_at:` property inside a package block.
+  collapseThresholdPx: number;
+  setCollapseThresholdPx: (px: number) => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -118,5 +124,8 @@ export const useFlowStore = create<FlowStore>()(
     showExportFrame: false,
     setShowExportFrame: (v) => set({ showExportFrame: v }),
     setExportFrame: (exportFrame) => set({ exportFrame }),
+
+    collapseThresholdPx: 200,
+    setCollapseThresholdPx: (collapseThresholdPx) => set({ collapseThresholdPx }),
   })),
 );
