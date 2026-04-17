@@ -12,6 +12,10 @@ export type ParseResult =
   | { ok: true; document: FlowDocument }
   | { ok: false; error: ParseError };
 
+interface RawComponent extends ComponentNode {
+  type: 'component';
+}
+
 interface RawConnection {
   type: 'connection';
   id: string | undefined;
@@ -22,21 +26,12 @@ interface RawConnection {
   arrowStyle: 'forward' | 'long' | 'bidirectional';
 }
 
-interface RawFlow {
+interface RawFlow extends FlowNode {
   type: 'flow';
-  name: string;
-  connection: string;
-  data?: string;
-  intervalMs: number;
-  traverseTimeMs: number;
-  startDelayMs: number;
-  direction: 'forward' | 'reverse';
-  color?: string;
-  after: string[];
 }
 
 interface RawParseResult {
-  components: ComponentNode[];
+  components: RawComponent[];
   connections: RawConnection[];
   flows: RawFlow[];
   groups: GroupNode[];

@@ -138,32 +138,66 @@ export async function exportGif(
   const totalFrames = Math.ceil(duration * fps);
   const frameDelay = 1000 / fps;
 
-  for (let i = 0; i < totalFrames; i++) {
-    // Fill with white (or requested) background
+  // Palette strategy: quantize ONCE from frame 0 and reuse for every frame.
+  // We reserve palette index 255 as "transparent" so delta frames can mark
+  // unchanged pixels transparent (the previous frame shows through) —
+  // dramatically shrinks file size on animations with a static background.
+  const TRANSPARENT_INDEX = 255;
+  let globalPalette: number[][] | null = null;
+  let prevIndexed: Uint8Array | null = null;
+
+  function renderFrame() {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, width, height);
-
     ctx.save();
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
-
-    // Draw static graph (with matching background so edge labels blend)
-    drawGraph(ctx, layout, { background });
-
+    // Static graph (background color matches so edge labels blend correctly).
+    drawGraph(ctx, layout, { background, scale });
     particleSystem.update(frameDelay, 1);
-
     drawParticlesOnCtx(ctx, particleSystem, layout);
-
     ctx.restore();
+    return ctx.getImageData(0, 0, width, height);
+  }
 
-    // Capture frame
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const palette = quantize(imageData.data, 256);
-    const index = applyPalette(imageData.data, palette);
-    gif.writeFrame(index, width, height, {
-      palette,
-      delay: Math.round(frameDelay),
-    });
+  for (let i = 0; i < totalFrames; i++) {
+    const imageData = renderFrame();
+
+    if (i === 0) {
+      // Build the global palette. Cap at 255 colors so index 255 stays
+      // reserved for the transparent slot used by delta frames.
+      const palette = quantize(imageData.data, 255, { format: 'rgb565' });
+      // Pad to exactly 256 entries so index 255 exists (color unused,
+      // always rendered as transparent).
+      while (palette.length < 256) palette.push([0, 0, 0]);
+      globalPalette = palette;
+
+      const indexed = applyPalette(imageData.data, palette);
+      gif.writeFrame(indexed, width, height, {
+        palette,
+        delay: Math.round(frameDelay),
+        // Keep frame in place so subsequent transparent pixels reveal it.
+        dispose: 1,
+      });
+      prevIndexed = indexed;
+    } else {
+      const indexed = applyPalette(imageData.data, globalPalette!);
+      // Delta: for every pixel identical to previous frame's index, write
+      // the transparent slot instead. Dramatic compression win because LZW
+      // compresses long runs of a single index very efficiently.
+      const delta = new Uint8Array(indexed.length);
+      const prev = prevIndexed!;
+      for (let p = 0; p < indexed.length; p++) {
+        delta[p] = indexed[p]! === prev[p]! ? TRANSPARENT_INDEX : indexed[p]!;
+      }
+      gif.writeFrame(delta, width, height, {
+        delay: Math.round(frameDelay),
+        transparent: true,
+        transparentIndex: TRANSPARENT_INDEX,
+        dispose: 1,
+      });
+      prevIndexed = indexed; // compare NEXT frame against the full frame, not the delta
+    }
 
     // Yield to UI thread every 10 frames to avoid freezing
     if (i % 10 === 0) {
@@ -176,7 +210,9 @@ export async function exportGif(
 }
 
 export function downloadBlob(data: Uint8Array, filename: string) {
-  const blob = new Blob([data], { type: 'image/gif' });
+  // Copy into a fresh Uint8Array so its buffer type is a plain ArrayBuffer
+  // (avoids TS complaining about SharedArrayBuffer in the input).
+  const blob = new Blob([new Uint8Array(data)], { type: 'image/gif' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

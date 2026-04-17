@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
+import { groupToggleRect, zoomCompensation } from './drawGraph';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
@@ -115,6 +116,7 @@ export default function FlowCanvas() {
       userZoom: zoomRef.current,
       exportFrame: useFlowStore.getState().showExportFrame ? useFlowStore.getState().exportFrame : null,
       collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
+      manualCollapsed: useFlowStore.getState().manualCollapsed,
     }));
 
     controllerRef.current = controller;
@@ -158,6 +160,50 @@ export default function FlowCanvas() {
       if (hidden(n)) continue;
       if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
         return n;
+      }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Check if (x, y) hits the collapse/expand toggle icon of any visible
+   * group. Returns the group whose toggle was hit, or null. Innermost wins.
+   */
+  const findToggleAt = useCallback((x: number, y: number, effectiveScale: number): LayoutGroup | null => {
+    const current = useFlowStore.getState().layout;
+    if (!current) return null;
+    const globalThreshold = useFlowStore.getState().collapseThresholdPx;
+    const manualCollapsed = useFlowStore.getState().manualCollapsed;
+    const collapsed = computeCollapsedGroups(current, effectiveScale, globalThreshold, manualCollapsed);
+    const zc = zoomCompensation(effectiveScale);
+
+    const parentOf = new Map<string, string | undefined>();
+    for (const g of current.groups) parentOf.set(g.id, g.parentGroup);
+
+    const sorted = [...current.groups].sort((a, b) => {
+      const depth = (id: string): number => {
+        let d = 0, c = parentOf.get(id);
+        while (c !== undefined) { d++; c = parentOf.get(c); }
+        return d;
+      };
+      return depth(b.id) - depth(a.id);
+    });
+
+    for (const g of sorted) {
+      // Skip hidden-by-ancestor groups.
+      let hiddenByAncestor = false;
+      let cursor = g.parentGroup;
+      while (cursor !== undefined) {
+        if (collapsed.has(cursor)) { hiddenByAncestor = true; break; }
+        cursor = parentOf.get(cursor);
+      }
+      if (hiddenByAncestor) continue;
+
+      const rect = groupToggleRect(g, zc);
+      if (!rect) continue;
+      if (x >= rect.x && x <= rect.x + rect.size &&
+          y >= rect.y && y <= rect.y + rect.size) {
+        return g;
       }
     }
     return null;
@@ -311,10 +357,21 @@ export default function FlowCanvas() {
       }
     }
 
-    // 2. Node hit-test — pass scale so hidden (collapsed-ancestor) nodes skip.
     const coords = getDiagramCoords(e);
     if (!coords) return;
     const tForNode = getTransform();
+
+    // 2. Collapse/expand toggle hit — fires immediately, no drag.
+    if (tForNode) {
+      const togglePkg = findToggleAt(coords.x, coords.y, tForNode.transform.scale);
+      if (togglePkg) {
+        useFlowStore.getState().toggleManualCollapsed(togglePkg.id);
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 3. Node hit-test — pass scale so hidden (collapsed-ancestor) nodes skip.
     const node = findNodeAt(coords.x, coords.y, tForNode?.transform.scale);
 
     if (node) {
@@ -328,7 +385,7 @@ export default function FlowCanvas() {
       return;
     }
 
-    // 3. Group handle hit-test (label band for expanded, full box for collapsed)
+    // 4. Group handle hit-test (label band for expanded, full box for collapsed)
     const t = getTransform();
     if (t) {
       const group = findGroupHandleAt(coords.x, coords.y, t.transform.scale);
@@ -345,7 +402,7 @@ export default function FlowCanvas() {
       }
     }
 
-    // 4. Pan
+    // 5. Pan
     dragRef.current = {
       kind: 'pan',
       startClientX: e.clientX,
@@ -355,7 +412,7 @@ export default function FlowCanvas() {
     };
     if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [findNodeAt, findGroupHandleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
+  }, [findNodeAt, findGroupHandleAt, findToggleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -376,6 +433,10 @@ export default function FlowCanvas() {
       const coords = getDiagramCoords(e);
       if (coords) {
         const t = getTransform();
+        if (t && findToggleAt(coords.x, coords.y, t.transform.scale)) {
+          canvas.style.cursor = 'pointer';
+          return;
+        }
         if (findNodeAt(coords.x, coords.y, t?.transform.scale)) { canvas.style.cursor = 'grab'; return; }
         if (t && findGroupHandleAt(coords.x, coords.y, t.transform.scale)) {
           canvas.style.cursor = 'grab';

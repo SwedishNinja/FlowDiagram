@@ -13,7 +13,49 @@
     "generate-parser": "peggy --format es -o src/parser/generated.js src/parser/flowdiagram.peggy",
     "electron": "electron .",
     "electron:dev": "concurrently -k \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
-    "electron:build": "npm run build && electron ."
+    "electron:build": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && electron-builder --win --dir && cd release && rm -f FlowDiagram-1.0.0-win-x64.zip && zip -r FlowDiagram-1.0.0-win-x64.zip win-unpacked/",
+    "dist:win-installer": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:mac": "npm run build && electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.flowdiagram.app",
+    "productName": "FlowDiagram",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": ["zip"],
+      "artifactName": "${productName}-${version}-win-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "FlowDiagram"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Graphics",
+      "artifactName": "${productName}-${version}.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.graphics-design",
+      "artifactName": "${productName}-${version}.${ext}"
+    }
   },
   "keywords": [],
   "author": "",
@@ -41,6 +83,7 @@
     "@vitejs/plugin-react": "^6.0.1",
     "concurrently": "^9.2.1",
     "electron": "^41.2.1",
+    "electron-builder": "^26.8.1",
     "peggy": "^5.1.0",
     "typescript": "^6.0.3",
     "vite": "^8.0.8",

@@ -1,10 +1,13 @@
 import type { LayoutResult, Point } from '../types';
-import { drawGraph, computeEffectiveEdges } from './drawGraph';
+import { drawGraph, computeEffectiveEdges, zoomCompensation } from './drawGraph';
 import { ParticleSystem } from './particles';
 import { pointAtProgress } from './pathUtils';
 
 const PARTICLE_RADIUS = 4;
 const PARTICLE_GLOW_RADIUS = 8;
+const PARTICLE_LABEL_FONT = 10;   // base font size, in diagram coords
+const PARTICLE_LABEL_PAD_H = 8;
+const PARTICLE_LABEL_HEIGHT = 16;
 
 const DEFAULT_COLLAPSE_THRESHOLD_PX = 200;
 
@@ -18,9 +21,14 @@ export function computeCollapsedGroups(
   layout: LayoutResult,
   effectiveScale: number,
   globalThresholdPx: number = DEFAULT_COLLAPSE_THRESHOLD_PX,
+  manualCollapsed: Record<string, true> = {},
 ): Set<string> {
   const collapsed = new Set<string>();
   for (const group of layout.groups) {
+    if (manualCollapsed[group.id]) {
+      collapsed.add(group.id);
+      continue;
+    }
     const threshold = group.collapseAtPx ?? globalThresholdPx;
     const renderedWidth = group.width * effectiveScale;
     if (renderedWidth < threshold) collapsed.add(group.id);
@@ -32,8 +40,15 @@ function drawParticles(
   ctx: CanvasRenderingContext2D,
   particleSystem: ParticleSystem,
   effectiveEdges: Map<string, { points: Point[]; suppressed: boolean }>,
+  zc: number = 1,
 ) {
   const labeledFlows = new Set<string>();
+
+  const particleRadius = PARTICLE_RADIUS * zc;
+  const glowRadius = PARTICLE_GLOW_RADIUS * zc;
+  const fontSize = PARTICLE_LABEL_FONT * zc;
+  const labelPad = PARTICLE_LABEL_PAD_H * zc;
+  const labelH = PARTICLE_LABEL_HEIGHT * zc;
 
   // Sort so leading particle gets the label (forward = highest progress first, reverse = lowest first)
   const sorted = [...particleSystem.particles].sort((a, b) => {
@@ -50,35 +65,34 @@ function drawParticles(
     ctx.save();
     // Glow
     ctx.beginPath();
-    ctx.arc(pos.x, pos.y, PARTICLE_GLOW_RADIUS, 0, Math.PI * 2);
+    ctx.arc(pos.x, pos.y, glowRadius, 0, Math.PI * 2);
     ctx.fillStyle = particle.color + '30';
     ctx.fill();
 
     // Dot
     ctx.beginPath();
-    ctx.arc(pos.x, pos.y, PARTICLE_RADIUS, 0, Math.PI * 2);
+    ctx.arc(pos.x, pos.y, particleRadius, 0, Math.PI * 2);
     ctx.fillStyle = particle.color;
     ctx.fill();
 
     // White center for depth
     ctx.beginPath();
-    ctx.arc(pos.x, pos.y, PARTICLE_RADIUS * 0.4, 0, Math.PI * 2);
+    ctx.arc(pos.x, pos.y, particleRadius * 0.4, 0, Math.PI * 2);
     ctx.fillStyle = '#ffffff';
     ctx.fill();
 
     if (particle.dataLabel && !labeledFlows.has(particle.flowName)) {
       labeledFlows.add(particle.flowName);
-      ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+      ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
       const metrics = ctx.measureText(particle.dataLabel);
-      const labelW = metrics.width + 8;
-      const labelH = 16;
+      const labelW = metrics.width + labelPad;
       const labelX = pos.x - labelW / 2;
-      const labelY = pos.y - PARTICLE_RADIUS - labelH - 4;
+      const labelY = pos.y - particleRadius - labelH - 4 * zc;
 
       // Background pill
       ctx.fillStyle = particle.color + 'DD';
       ctx.beginPath();
-      const r = 4;
+      const r = 4 * zc;
       ctx.moveTo(labelX + r, labelY);
       ctx.lineTo(labelX + labelW - r, labelY);
       ctx.quadraticCurveTo(labelX + labelW, labelY, labelX + labelW, labelY + r);
@@ -191,6 +205,8 @@ export function createAnimationLoop(
     exportFrame?: { x: number; y: number; width: number; height: number } | null;
     /** Global collapse threshold in CSS px. Overridden per-package via `collapse_at:` in the DSL. */
     collapseThresholdPx?: number;
+    /** User-pinned collapsed packages (force collapsed regardless of zoom). */
+    manualCollapsed?: Record<string, true>;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -222,6 +238,7 @@ export function createAnimationLoop(
       currentLayout,
       scale,
       state.collapseThresholdPx,
+      state.manualCollapsed,
     );
     const effectiveEdges = computeEffectiveEdges(currentLayout, collapsedGroups);
 
@@ -229,7 +246,9 @@ export function createAnimationLoop(
     ctx.translate(offsetX, offsetY);
     ctx.scale(scale, scale);
 
-    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges });
+    const zc = zoomCompensation(scale);
+
+    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges, scale });
 
     if (state.isPlaying && lastTime !== null) {
       const deltaMs = Math.min(timestamp - lastTime, 50);
@@ -237,7 +256,7 @@ export function createAnimationLoop(
     }
     lastTime = timestamp;
 
-    drawParticles(ctx, particleSystem, effectiveEdges);
+    drawParticles(ctx, particleSystem, effectiveEdges, zc);
 
     if (state.exportFrame) {
       drawExportFrame(ctx, state.exportFrame, scale);

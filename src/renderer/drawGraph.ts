@@ -20,6 +20,7 @@ const COLORS = {
 const NODE_RADIUS = 8;
 const GROUP_RADIUS = 12;
 const ARROWHEAD_SIZE = 10;
+const EDGE_STROKE = 1.5;
 
 export interface DrawOptions {
   /** Set of group IDs that are currently collapsed (all contents hidden, external flows route to border). */
@@ -28,6 +29,20 @@ export interface DrawOptions {
   effectiveEdges?: Map<string, { points: Point[]; suppressed: boolean }>;
   /** Background color (also used for edge-label backgrounds). Defaults to the live-canvas light gray. */
   background?: string;
+  /**
+   * Effective viewport scale (diagram→screen). When < 1 (zoomed out), edge
+   * strokes, arrowheads, and edge labels are inflated in diagram coords so
+   * they hold their screen-pixel size. When ≥ 1 (zoomed in), no correction
+   * is applied — everything scales up proportionally.
+   */
+  scale?: number;
+}
+
+/** Return the factor that, when multiplied with a base diagram-coord size,
+ * yields constant screen-pixel size at zoom-out and natural scaling at zoom-in. */
+export function zoomCompensation(scale: number | undefined): number {
+  if (!scale || scale >= 1) return 1;
+  return 1 / scale;
 }
 
 function drawRoundedRect(
@@ -57,7 +72,27 @@ function resolveColor(color?: string): string {
   return color;
 }
 
-function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed: boolean) {
+/** Size of the clickable collapse/expand toggle in diagram coords (pre-zoom-compensation). */
+const TOGGLE_BASE = 16;
+
+/** Returns the toggle's bounding box (diagram coords) for hit-testing, or null
+ *  if the group's drawn size is too small to host a sensible icon. Exported
+ *  so FlowCanvas can hit-test clicks. */
+export function groupToggleRect(
+  group: LayoutGroup,
+  zc: number,
+): { x: number; y: number; size: number } | null {
+  const size = TOGGLE_BASE * zc;
+  if (size * 2 > Math.min(group.width, group.height)) return null;
+  const inset = 6 * zc;
+  return {
+    x: group.x + group.width - size - inset,
+    y: group.y + inset,
+    size,
+  };
+}
+
+function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed: boolean, zc: number = 1) {
   ctx.save();
   drawRoundedRect(ctx, group.x, group.y, group.width, group.height, GROUP_RADIUS);
 
@@ -84,16 +119,49 @@ function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed:
     ? (custom ? contrastingInk(custom) : COLORS.groupLabelCollapsed)
     : COLORS.groupLabel;
   if (collapsed) {
-    ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = `${14 * zc}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(group.displayName, group.x + group.width / 2, group.y + group.height / 2);
   } else {
-    ctx.font = '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = `${12 * zc}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(group.displayName, group.x + 10, group.y + 6);
+    ctx.fillText(group.displayName, group.x + 10 * zc, group.y + 6 * zc);
   }
+
+  // Collapse / expand toggle icon (top-right).
+  const toggle = groupToggleRect(group, zc);
+  if (toggle) {
+    const { x: tx, y: ty, size } = toggle;
+    const cx = tx + size / 2;
+    const cy = ty + size / 2;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
+    ctx.fillStyle = collapsed
+      ? (custom ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.6)')
+      : 'rgba(255,255,255,0.8)';
+    ctx.fill();
+    ctx.lineWidth = 1 * zc;
+    ctx.strokeStyle = collapsed
+      ? (custom ? contrastingInk(custom) : COLORS.groupLabelCollapsed)
+      : (custom ?? COLORS.groupStroke);
+    ctx.stroke();
+
+    // The glyph: horizontal bar (−) for expanded, plus (+) for collapsed.
+    ctx.beginPath();
+    ctx.moveTo(cx - size * 0.28, cy);
+    ctx.lineTo(cx + size * 0.28, cy);
+    if (collapsed) {
+      ctx.moveTo(cx, cy - size * 0.28);
+      ctx.lineTo(cx, cy + size * 0.28);
+    }
+    ctx.lineWidth = 1.5 * zc;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -172,17 +240,17 @@ function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode) {
   }
 }
 
-function drawArrowhead(ctx: CanvasRenderingContext2D, to: Point, from: Point) {
+function drawArrowhead(ctx: CanvasRenderingContext2D, to: Point, from: Point, size: number) {
   const angle = Math.atan2(to.y - from.y, to.x - from.x);
   ctx.beginPath();
   ctx.moveTo(to.x, to.y);
   ctx.lineTo(
-    to.x - ARROWHEAD_SIZE * Math.cos(angle - Math.PI / 6),
-    to.y - ARROWHEAD_SIZE * Math.sin(angle - Math.PI / 6),
+    to.x - size * Math.cos(angle - Math.PI / 6),
+    to.y - size * Math.sin(angle - Math.PI / 6),
   );
   ctx.lineTo(
-    to.x - ARROWHEAD_SIZE * Math.cos(angle + Math.PI / 6),
-    to.y - ARROWHEAD_SIZE * Math.sin(angle + Math.PI / 6),
+    to.x - size * Math.cos(angle + Math.PI / 6),
+    to.y - size * Math.sin(angle + Math.PI / 6),
   );
   ctx.closePath();
   ctx.fill();
@@ -193,14 +261,18 @@ function drawEdge(
   edge: LayoutEdge,
   points: Point[],
   background: string = COLORS.background,
+  zc: number = 1,
 ) {
   if (points.length < 2) return;
 
+  const strokeWidth = EDGE_STROKE * zc;
+  const arrowSize = ARROWHEAD_SIZE * zc;
+
   ctx.strokeStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = strokeWidth;
 
   if (edge.lineStyle === 'dotted') {
-    ctx.setLineDash([4, 4]);
+    ctx.setLineDash([4 * zc, 4 * zc]);
   } else {
     ctx.setLineDash([]);
   }
@@ -216,12 +288,12 @@ function drawEdge(
   const last = points[points.length - 1]!;
   const prev = points[points.length - 2]!;
   ctx.fillStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
-  drawArrowhead(ctx, last, prev);
+  drawArrowhead(ctx, last, prev, arrowSize);
 
   if (edge.arrowStyle === 'bidirectional') {
     const first = points[0]!;
     const second = points[1]!;
-    drawArrowhead(ctx, first, second);
+    drawArrowhead(ctx, first, second, arrowSize);
   }
 
   if (edge.label) {
@@ -229,14 +301,15 @@ function drawEdge(
     const midPoint = points[midIdx]!;
     const prevPoint = points[Math.max(0, midIdx - 1)]!;
 
-    ctx.fillStyle = background;
-    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    const fontSize = 11 * zc;
+    ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     const metrics = ctx.measureText(edge.label);
-    const labelW = metrics.width + 8;
-    const labelH = 16;
+    const labelW = metrics.width + 8 * zc;
+    const labelH = 16 * zc;
 
     const labelX = (midPoint.x + prevPoint.x) / 2;
-    const labelY = (midPoint.y + prevPoint.y) / 2 - 10;
+    const labelY = (midPoint.y + prevPoint.y) / 2 - 10 * zc;
+    ctx.fillStyle = background;
     ctx.fillRect(labelX - labelW / 2, labelY - labelH / 2, labelW, labelH);
 
     ctx.fillStyle = COLORS.edgeLabel;
@@ -456,6 +529,7 @@ function groupIsHidden(
 export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, options: DrawOptions = {}) {
   const collapsedGroups = options.collapsedGroups ?? new Set<string>();
   const background = options.background ?? COLORS.background;
+  const zc = zoomCompensation(options.scale);
 
   // Background fill
   ctx.fillStyle = background;
@@ -476,7 +550,7 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
   for (const group of groupsByDepth) {
     if (groupIsHidden(group.id, parentOf, collapsedGroups)) continue;
     const collapsed = collapsedGroups.has(group.id);
-    drawGroup(ctx, group, collapsed);
+    drawGroup(ctx, group, collapsed, zc);
   }
 
   // 2. Edges — use effectiveEdges (rerouted + suppression info).
@@ -485,7 +559,7 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
     const eff = effectiveEdges?.get(edge.id);
     if (eff?.suppressed) continue;
     const points = eff?.points ?? edge.points;
-    drawEdge(ctx, edge, points, background);
+    drawEdge(ctx, edge, points, background, zc);
   }
 
   // 3. Nodes — hide when inside a collapsed ancestor.

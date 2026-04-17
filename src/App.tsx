@@ -63,6 +63,7 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
   const [exporting, setExporting] = useState(false);
   const [exportDuration, setExportDuration] = useState(8);
   const [exportFps, setExportFps] = useState(30);
+  const [exportWidth, setExportWidth] = useState(1024);
 
   const toggleFrame = () => {
     if (showExportFrame) {
@@ -87,10 +88,10 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
     setExporting(true);
     try {
       const viewport = showExportFrame && exportFrame ? exportFrame : undefined;
-      const width = 1024;
+      const width = exportWidth;
       const height = viewport
         ? Math.round(width * (viewport.height / viewport.width))
-        : 768;
+        : Math.round(width * 0.75);
 
       const data = await exportGif(ast, layout, {
         width,
@@ -271,6 +272,29 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
           className="fd-num"
           aria-label="Export frames per second"
         />
+      </label>
+
+      <label
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        className="fd-label"
+        title="Output width in pixels. Height auto-scales from the diagram's aspect ratio. Lower width → much smaller file."
+      >
+        <span>Width</span>
+        <input
+          type="number"
+          min={320}
+          max={2560}
+          step={64}
+          value={exportWidth}
+          onChange={(e) => {
+            const v = parseInt(e.target.value, 10);
+            if (!isNaN(v) && v >= 320) setExportWidth(Math.min(v, 2560));
+          }}
+          disabled={exporting}
+          className="fd-num"
+          aria-label="Export width in pixels"
+        />
+        <span style={{ color: 'var(--ink-5)' }}>px</span>
       </label>
 
       <button

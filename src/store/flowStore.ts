@@ -39,6 +39,13 @@ export interface FlowStore {
   // via the DSL `collapse_at:` property inside a package block.
   collapseThresholdPx: number;
   setCollapseThresholdPx: (px: number) => void;
+
+  /** IDs of packages the user has manually pinned collapsed. Union with the
+   *  auto-collapsed set forms the effective collapsed set. In-memory only;
+   *  resets on reload (persist via `collapse_at: 99999px` in the DSL if you
+   *  want a permanent collapse). */
+  manualCollapsed: Record<string, true>;
+  toggleManualCollapsed: (id: string) => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -127,5 +134,13 @@ export const useFlowStore = create<FlowStore>()(
 
     collapseThresholdPx: 200,
     setCollapseThresholdPx: (collapseThresholdPx) => set({ collapseThresholdPx }),
+
+    manualCollapsed: {},
+    toggleManualCollapsed: (id) => set((s) => {
+      const next = { ...s.manualCollapsed };
+      if (next[id]) delete next[id];
+      else next[id] = true;
+      return { manualCollapsed: next };
+    }),
   })),
 );
