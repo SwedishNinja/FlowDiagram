@@ -5,8 +5,12 @@ import { computeLayout } from './layout/layoutEngine';
 import FlowCanvas from './renderer/FlowCanvas';
 import FlowEditor from './editor/FlowEditor';
 import { exportGif, computeLayoutBounds, downloadBlob } from './renderer/exportGif';
+import { exportVideo, downloadVideoBlob } from './renderer/exportVideo';
+import { detectExportDuration } from './renderer/detectDuration';
 import { useElectronFile, isElectron } from './electron/useElectronFile';
 import FileSidebar from './electron/FileSidebar';
+
+type ExportFormat = 'gif' | 'webm';
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4];
 
@@ -60,10 +64,15 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
   const setExportFrame = useFlowStore((s) => s.setExportFrame);
   const collapseThresholdPx = useFlowStore((s) => s.collapseThresholdPx);
   const setCollapseThresholdPx = useFlowStore((s) => s.setCollapseThresholdPx);
+  const triggerParticleReset = useFlowStore((s) => s.triggerParticleReset);
   const [exporting, setExporting] = useState(false);
   const [exportDuration, setExportDuration] = useState(8);
   const [exportFps, setExportFps] = useState(30);
   const [exportWidth, setExportWidth] = useState(1024);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('gif');
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
+
+  const canRender = !!ast && !!layout;
 
   const toggleFrame = () => {
     if (showExportFrame) {
@@ -83,9 +92,10 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
     }
   };
 
-  const handleExportGif = async () => {
+  const handleRender = async () => {
     if (!ast || !layout) return;
     setExporting(true);
+    setExportPanelOpen(false);
     try {
       const viewport = showExportFrame && exportFrame ? exportFrame : undefined;
       const width = exportWidth;
@@ -93,22 +103,40 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
         ? Math.round(width * (viewport.height / viewport.width))
         : Math.round(width * 0.75);
 
-      const data = await exportGif(ast, layout, {
-        width,
-        height,
-        duration: exportDuration,
-        fps: exportFps,
-        viewport,
-        background: 'white',
-      });
-      if (isElectron && window.electronAPI) {
-        await window.electronAPI.exportGif(data);
+      if (exportFormat === 'gif') {
+        const data = await exportGif(ast, layout, {
+          width,
+          height,
+          duration: exportDuration,
+          fps: exportFps,
+          viewport,
+          background: 'white',
+        });
+        if (isElectron && window.electronAPI) {
+          await window.electronAPI.exportGif(data);
+        } else {
+          downloadBlob(data, 'flowdiagram.gif');
+        }
       } else {
-        downloadBlob(data, 'flowdiagram.gif');
+        const blob = await exportVideo(ast, layout, {
+          width,
+          height,
+          duration: exportDuration,
+          fps: exportFps,
+          viewport,
+          background: 'white',
+        });
+        downloadVideoBlob(blob, 'flowdiagram.webm');
       }
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleAutoDetectDuration = () => {
+    if (!ast || !layout) return;
+    const seconds = detectExportDuration(ast, layout);
+    setExportDuration(seconds);
   };
 
   const fileName = currentPath ? currentPath.split(/[/\\]/).pop() : null;
@@ -155,6 +183,18 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
         <span style={{ letterSpacing: '0.08em', textTransform: 'uppercase', fontSize: 'var(--fs-micro)' }}>
           {isPlaying ? 'Playing' : 'Play'}
         </span>
+      </button>
+
+      {/* Restart — re-initializes particles + stages without editing source */}
+      <button
+        onClick={triggerParticleReset}
+        className="fd-btn fd-btn--ghost"
+        style={{ justifyContent: 'center' }}
+        title="Restart flows — clear all particles and restart stages from the top"
+        aria-label="Restart flows"
+      >
+        <Icon d="M3 12a9 9 0 0 1 15.5-6.3L21 8 M21 4v4h-4 M21 12a9 9 0 0 1-15.5 6.3L3 16 M3 20v-4h4" />
+        Restart
       </button>
 
       <span className="fd-div" />
@@ -232,90 +272,236 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
 
       <span className="fd-div" />
 
-      {/* Export cluster */}
-      <label style={{ display: 'flex', alignItems: 'center', gap: '6px' }} className="fd-label">
-        <span>Duration</span>
-        <input
-          type="number"
-          min={1}
-          max={60}
-          step={1}
-          value={exportDuration}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v) && v > 0) setExportDuration(v);
-          }}
-          disabled={exporting}
-          className="fd-num"
-          aria-label="Export duration in seconds"
-        />
-        <span style={{ color: 'var(--ink-5)' }}>s</span>
-      </label>
+      <div style={{ position: 'relative' }}>
+        <button
+          onClick={() => setExportPanelOpen((v) => !v)}
+          disabled={exporting || !canRender}
+          className={`fd-btn ${exportPanelOpen ? 'fd-btn--toggle-on' : 'fd-btn--accent'}`}
+          title="Export GIF or video"
+          aria-expanded={exportPanelOpen}
+          aria-haspopup="dialog"
+        >
+          <Icon d="M12 3v12 M7 10l5 5 5-5 M5 21h14" />
+          {exporting ? 'Rendering…' : 'Export'}
+        </button>
 
-      <label
-        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        className="fd-label"
-        title="Frames per second for GIF export. GIF maxes around 50fps. Higher = smoother motion and larger files."
-      >
-        <span>FPS</span>
-        <input
-          type="number"
-          min={5}
-          max={50}
-          step={5}
-          value={exportFps}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v) && v >= 5) setExportFps(Math.min(v, 50));
-          }}
-          disabled={exporting}
-          className="fd-num"
-          aria-label="Export frames per second"
-        />
-      </label>
+        {exportPanelOpen && (
+          <ExportPanel
+            format={exportFormat}
+            setFormat={setExportFormat}
+            duration={exportDuration}
+            setDuration={setExportDuration}
+            fps={exportFps}
+            setFps={setExportFps}
+            width={exportWidth}
+            setWidth={setExportWidth}
+            showExportFrame={showExportFrame}
+            toggleFrame={toggleFrame}
+            canRender={canRender}
+            onAutoDetect={handleAutoDetectDuration}
+            onRender={handleRender}
+            onClose={() => setExportPanelOpen(false)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
-      <label
-        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        className="fd-label"
-        title="Output width in pixels. Height auto-scales from the diagram's aspect ratio. Lower width → much smaller file."
-      >
-        <span>Width</span>
-        <input
-          type="number"
-          min={320}
-          max={2560}
-          step={64}
-          value={exportWidth}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v) && v >= 320) setExportWidth(Math.min(v, 2560));
-          }}
-          disabled={exporting}
-          className="fd-num"
-          aria-label="Export width in pixels"
-        />
-        <span style={{ color: 'var(--ink-5)' }}>px</span>
-      </label>
+interface ClampedNumberInputProps {
+  label: string;
+  min: number;
+  max: number;
+  step?: number;
+  value: number;
+  onChange: (v: number) => void;
+}
 
+/** Numeric input that allows any positive value during typing but clamps to
+ *  [min, max] on blur. Without this, a controlled number input with `value`
+ *  tied to state would silently reject partial digits below the minimum. */
+function ClampedNumberInput({ label, min, max, step = 1, value, onChange }: ClampedNumberInputProps) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+      <span className="fd-label">{label}</span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => {
+          const v = parseInt(e.target.value, 10);
+          if (!isNaN(v) && v > 0) onChange(Math.min(v, max));
+        }}
+        onBlur={(e) => {
+          const v = parseInt(e.target.value, 10);
+          if (isNaN(v) || v < min) onChange(min);
+          else onChange(Math.min(v, max));
+        }}
+        className="fd-num"
+        style={{ width: '100%' }}
+        aria-label={label}
+      />
+    </label>
+  );
+}
+
+interface ExportPanelProps {
+  format: ExportFormat;
+  setFormat: (f: ExportFormat) => void;
+  duration: number;
+  setDuration: (n: number) => void;
+  fps: number;
+  setFps: (n: number) => void;
+  width: number;
+  setWidth: (n: number) => void;
+  showExportFrame: boolean;
+  toggleFrame: () => void;
+  canRender: boolean;
+  onAutoDetect: () => void;
+  onRender: () => void;
+  onClose: () => void;
+}
+
+function ExportPanel({
+  format, setFormat,
+  duration, setDuration,
+  fps, setFps,
+  width, setWidth,
+  showExportFrame, toggleFrame,
+  canRender,
+  onAutoDetect, onRender, onClose,
+}: ExportPanelProps) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onCloseRef.current();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
+    // Delay by one tick so the click that opened the panel doesn't immediately close it.
+    const t = setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label="Export settings"
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        right: 0,
+        width: '300px',
+        background: 'var(--surface-2)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--r-md)',
+        padding: '14px',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+        zIndex: 10,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+      }}
+    >
+      <div className="fd-label" style={{ marginBottom: '-4px' }}>Export</div>
+
+      {/* Format segmented */}
+      <div>
+        <div className="fd-label" style={{ marginBottom: '6px' }}>Format</div>
+        <div className="fd-seg" role="group" aria-label="Export format" style={{ width: '100%' }}>
+          <button
+            onClick={() => setFormat('gif')}
+            data-active={format === 'gif'}
+            style={{ flex: 1 }}
+            title="Animated GIF — pasteable anywhere"
+          >
+            GIF
+          </button>
+          <button
+            onClick={() => setFormat('webm')}
+            data-active={format === 'webm'}
+            style={{ flex: 1 }}
+            title="WebM video — much smaller than GIF, plays in browsers / VLC"
+          >
+            WebM
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
+        <div style={{ flex: 1 }}>
+          <ClampedNumberInput
+            label="Duration (s)"
+            min={1}
+            max={60}
+            step={1}
+            value={duration}
+            onChange={setDuration}
+          />
+        </div>
+        <button
+          onClick={onAutoDetect}
+          disabled={!canRender}
+          className="fd-btn fd-btn--ghost"
+          title="Detect duration by simulating until all stages complete one cycle"
+          style={{ height: '22px' }}
+        >
+          Auto
+        </button>
+      </div>
+
+      <ClampedNumberInput
+        label="Frames / second"
+        min={5}
+        max={50}
+        step={5}
+        value={fps}
+        onChange={setFps}
+      />
+
+      <ClampedNumberInput
+        label="Width (px)"
+        min={320}
+        max={2560}
+        step={64}
+        value={width}
+        onChange={setWidth}
+      />
+
+      {/* Frame toggle */}
       <button
         onClick={toggleFrame}
-        disabled={!layout}
-        className={`fd-btn ${showExportFrame ? 'fd-btn--toggle-on' : ''}`}
-        title={showExportFrame ? 'Hide export frame' : 'Show export frame'}
+        className={`fd-btn ${showExportFrame ? 'fd-btn--toggle-on' : 'fd-btn--ghost'}`}
+        title={showExportFrame ? 'Hide export frame' : 'Show export frame to crop the output'}
       >
         <Icon d="M4 7V4h3 M17 4h3v3 M20 17v3h-3 M7 20H4v-3" />
-        {showExportFrame ? 'Frame On' : 'Frame'}
+        {showExportFrame ? 'Frame active (crop)' : 'Show crop frame'}
       </button>
 
+      {/* Render */}
       <button
-        onClick={handleExportGif}
-        disabled={exporting || !ast || !layout}
+        onClick={onRender}
+        disabled={!canRender}
         className="fd-btn fd-btn--accent"
-        title="Render GIF"
+        style={{ marginTop: '4px' }}
       >
-        <Icon d="M12 3v12 M7 10l5 5 5-5 M5 21h14" />
-        {exporting ? 'Rendering…' : 'Export GIF'}
+        Render {format.toUpperCase()}
       </button>
+
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
+        {format === 'webm'
+          ? 'WebM renders in real time — a 10 s export takes about 10 s.'
+          : 'GIF renders as fast as possible. Large widths make much bigger files.'}
+      </div>
     </div>
   );
 }

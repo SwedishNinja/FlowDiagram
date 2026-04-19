@@ -46,6 +46,11 @@ export interface FlowStore {
    *  want a permanent collapse). */
   manualCollapsed: Record<string, true>;
   toggleManualCollapsed: (id: string) => void;
+
+  /** Monotonically bumped to request that the renderer reset all particles
+   *  and stages. Any consumer can subscribe and react. */
+  particleResetSignal: number;
+  triggerParticleReset: () => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -142,5 +147,8 @@ export const useFlowStore = create<FlowStore>()(
       else next[id] = true;
       return { manualCollapsed: next };
     }),
+
+    particleResetSignal: 0,
+    triggerParticleReset: () => set((s) => ({ particleResetSignal: s.particleResetSignal + 1 })),
   })),
 );

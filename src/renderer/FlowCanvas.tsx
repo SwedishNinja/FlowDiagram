@@ -134,6 +134,13 @@ export default function FlowCanvas() {
     }
   }, [layout]);
 
+  const particleResetSignal = useFlowStore((s) => s.particleResetSignal);
+  useEffect(() => {
+    // 0 is the initial value — skip the mount run so we don't reset on first render.
+    if (particleResetSignal === 0) return;
+    controllerRef.current?.reset();
+  }, [particleResetSignal]);
+
   const findNodeAt = useCallback((x: number, y: number, effectiveScale?: number): LayoutNode | null => {
     const current = useFlowStore.getState().layout;
     if (!current) return null;
