@@ -506,6 +506,11 @@ function ExportPanel({
   );
 }
 
+const SPLITTER_WIDTH = 5;
+const EDITOR_WIDTH_KEY = 'flowdiagram-editor-width';
+const EDITOR_MIN_WIDTH = 280;
+const CANVAS_MIN_WIDTH = 360;
+
 export default function App() {
   const setSourceText = useFlowStore((s) => s.setSourceText);
   const setParseResult = useFlowStore((s) => s.setParseResult);
@@ -516,6 +521,51 @@ export default function App() {
   const latestTextRef = useRef(useFlowStore.getState().sourceText);
 
   const { currentPath, openFile, saveFile, newFile, loadFile } = useElectronFile();
+
+  // Editor panel width (in CSS px) — draggable splitter persists this.
+  const [editorWidth, setEditorWidth] = useState<number>(() => {
+    try {
+      const saved = parseInt(localStorage.getItem(EDITOR_WIDTH_KEY) ?? '', 10);
+      if (Number.isFinite(saved) && saved >= EDITOR_MIN_WIDTH) return saved;
+    } catch { /* ignore */ }
+    // Default ~40% of viewport, falls back to a reasonable absolute value if window not yet measured.
+    return Math.max(EDITOR_MIN_WIDTH, Math.round(window.innerWidth * 0.4));
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem(EDITOR_WIDTH_KEY, String(editorWidth)); } catch { /* ignore */ }
+  }, [editorWidth]);
+
+  // Re-clamp editor width if the window shrinks so the canvas keeps a usable minimum.
+  useEffect(() => {
+    const onResize = () => {
+      setEditorWidth((w) => Math.min(w, Math.max(EDITOR_MIN_WIDTH, window.innerWidth - CANVAS_MIN_WIDTH - SPLITTER_WIDTH)));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  const splitterDragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const handleSplitterDown = useCallback((e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    splitterDragRef.current = { startX: e.clientX, startWidth: editorWidth };
+  }, [editorWidth]);
+  const handleSplitterMove = useCallback((e: React.PointerEvent) => {
+    const drag = splitterDragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const max = Math.max(EDITOR_MIN_WIDTH, window.innerWidth - CANVAS_MIN_WIDTH - SPLITTER_WIDTH);
+    setEditorWidth(Math.min(max, Math.max(EDITOR_MIN_WIDTH, drag.startWidth + dx)));
+  }, []);
+  const handleSplitterUp = useCallback((e: React.PointerEvent) => {
+    if (splitterDragRef.current) {
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      splitterDragRef.current = null;
+    }
+  }, []);
+  const handleSplitterDoubleClick = useCallback(() => {
+    setEditorWidth(Math.max(EDITOR_MIN_WIDTH, Math.round(window.innerWidth * 0.4)));
+  }, []);
 
   const handleTextChange = useCallback((text: string) => {
     latestTextRef.current = text;
@@ -556,12 +606,11 @@ export default function App() {
       {/* Editor panel */}
       <div
         style={{
-          width: '40%',
-          minWidth: '360px',
+          width: `${editorWidth}px`,
+          flexShrink: 0,
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--surface-2)',
-          borderRight: '1px solid var(--line)',
         }}
       >
         <div
@@ -634,10 +683,30 @@ export default function App() {
         )}
       </div>
 
+      {/* Splitter — drag to resize editor / canvas. Double-click to reset. */}
+      <div
+        onPointerDown={handleSplitterDown}
+        onPointerMove={handleSplitterMove}
+        onPointerUp={handleSplitterUp}
+        onPointerCancel={handleSplitterUp}
+        onDoubleClick={handleSplitterDoubleClick}
+        title="Drag to resize · double-click to reset"
+        role="separator"
+        aria-orientation="vertical"
+        style={{
+          width: `${SPLITTER_WIDTH}px`,
+          flexShrink: 0,
+          cursor: 'col-resize',
+          background: 'var(--line)',
+          touchAction: 'none',
+        }}
+      />
+
       {/* Canvas panel */}
       <div
         style={{
           flex: 1,
+          minWidth: 0,
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--surface-canvas)',

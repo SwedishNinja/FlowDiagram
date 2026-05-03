@@ -232,6 +232,10 @@ export class ParticleSystem {
           if (depState.completionCount <= consumed) { allAvailable = false; break; }
         }
         if (allAvailable) canRun = true;
+        // After the first run, repeat:true keeps the stage cycling on its own
+        // even if upstream deps haven't completed again. Without this branch,
+        // `repeat: true` on a dep-having stage was silently ignored.
+        else if (stage.repeat && stage.completionCount > 0) canRun = true;
       }
 
       if (canRun) {

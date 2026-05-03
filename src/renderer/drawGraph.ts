@@ -45,6 +45,33 @@ export function zoomCompensation(scale: number | undefined): number {
   return 1 / scale;
 }
 
+/**
+ * Fade edge labels out as the diagram is zoomed out. Above ~0.7 (mostly
+ * fitted) they're fully visible; below ~0.45 they're gone. This keeps the
+ * canvas readable when many short edges crowd a small area.
+ */
+function edgeLabelOpacity(scale: number | undefined): number {
+  if (!scale) return 1;
+  if (scale >= 0.7) return 1;
+  if (scale <= 0.45) return 0;
+  return (scale - 0.45) / (0.7 - 0.45);
+}
+
+/** Truncate text with an ellipsis so it fits within `maxWidth` (canvas px,
+ *  measured with the currently-set ctx.font). Returns '' if even '…' won't fit. */
+function truncateToFit(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (maxWidth <= 0) return '';
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  if (ctx.measureText('…').width > maxWidth) return '';
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (ctx.measureText(text.slice(0, mid) + '…').width <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo === 0 ? '…' : text.slice(0, lo) + '…';
+}
+
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -114,7 +141,8 @@ function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed:
     ctx.stroke();
   }
 
-  // Label — centered when collapsed, top-left when expanded.
+  // Label — centered when collapsed, top-left when expanded. Truncates
+  // with ellipsis when it can't fit the available band.
   ctx.fillStyle = collapsed
     ? (custom ? contrastingInk(custom) : COLORS.groupLabelCollapsed)
     : COLORS.groupLabel;
@@ -122,12 +150,18 @@ function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed:
     ctx.font = `${14 * zc}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(group.displayName, group.x + group.width / 2, group.y + group.height / 2);
+    const collapsedMax = group.width - 16 * zc;
+    const fitted = truncateToFit(ctx, group.displayName, collapsedMax);
+    if (fitted) ctx.fillText(fitted, group.x + group.width / 2, group.y + group.height / 2);
   } else {
     ctx.font = `${12 * zc}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(group.displayName, group.x + 10 * zc, group.y + 6 * zc);
+    // Reserve space at the right for the toggle icon (~TOGGLE_BASE + insets).
+    const reserved = (TOGGLE_BASE + 14) * zc;
+    const expandedMax = group.width - 10 * zc - reserved;
+    const fitted = truncateToFit(ctx, group.displayName, expandedMax);
+    if (fitted) ctx.fillText(fitted, group.x + 10 * zc, group.y + 6 * zc);
   }
 
   // Collapse / expand toggle icon (top-right).
@@ -231,12 +265,16 @@ function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode) {
   const textY = node.stereotype
     ? node.y + node.height / 2 - 7
     : node.y + node.height / 2;
-  ctx.fillText(node.displayName, node.x + node.width / 2, textY);
+  const labelMax = node.width - 16;
+  const fittedLabel = truncateToFit(ctx, node.displayName, labelMax);
+  if (fittedLabel) ctx.fillText(fittedLabel, node.x + node.width / 2, textY);
 
   if (node.stereotype) {
     ctx.fillStyle = COLORS.stereotypeText;
     ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    ctx.fillText(`\u00AB${node.stereotype}\u00BB`, node.x + node.width / 2, textY + 16);
+    const stereoText = `\u00AB${node.stereotype}\u00BB`;
+    const fittedStereo = truncateToFit(ctx, stereoText, labelMax);
+    if (fittedStereo) ctx.fillText(fittedStereo, node.x + node.width / 2, textY + 16);
   }
 }
 
@@ -262,6 +300,7 @@ function drawEdge(
   points: Point[],
   background: string = COLORS.background,
   zc: number = 1,
+  labelOpacity: number = 1,
 ) {
   if (points.length < 2) return;
 
@@ -296,7 +335,7 @@ function drawEdge(
     drawArrowhead(ctx, first, second, arrowSize);
   }
 
-  if (edge.label) {
+  if (edge.label && labelOpacity > 0.01) {
     const midIdx = Math.floor(points.length / 2);
     const midPoint = points[midIdx]!;
     const prevPoint = points[Math.max(0, midIdx - 1)]!;
@@ -309,6 +348,8 @@ function drawEdge(
 
     const labelX = (midPoint.x + prevPoint.x) / 2;
     const labelY = (midPoint.y + prevPoint.y) / 2 - 10 * zc;
+    const prevAlpha = ctx.globalAlpha;
+    ctx.globalAlpha = prevAlpha * labelOpacity;
     ctx.fillStyle = background;
     ctx.fillRect(labelX - labelW / 2, labelY - labelH / 2, labelW, labelH);
 
@@ -316,6 +357,7 @@ function drawEdge(
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(edge.label, labelX, labelY);
+    ctx.globalAlpha = prevAlpha;
   }
 }
 
@@ -555,11 +597,12 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
 
   // 2. Edges — use effectiveEdges (rerouted + suppression info).
   const effectiveEdges = options.effectiveEdges;
+  const labelOpacity = edgeLabelOpacity(options.scale);
   for (const edge of layout.edges) {
     const eff = effectiveEdges?.get(edge.id);
     if (eff?.suppressed) continue;
     const points = eff?.points ?? edge.points;
-    drawEdge(ctx, edge, points, background, zc);
+    drawEdge(ctx, edge, points, background, zc, labelOpacity);
   }
 
   // 3. Nodes — hide when inside a collapsed ancestor.
