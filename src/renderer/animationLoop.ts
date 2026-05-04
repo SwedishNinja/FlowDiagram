@@ -2,6 +2,7 @@ import type { LayoutResult } from '../types';
 import { drawGraph, computeEffectiveEdges, zoomCompensation } from './drawGraph';
 import { ParticleSystem } from './particles';
 import { drawParticles } from './drawParticles';
+import { pointAtProgress } from './pathUtils';
 
 const DEFAULT_COLLAPSE_THRESHOLD_PX = 200;
 
@@ -105,6 +106,11 @@ export interface AnimationController {
   stop: () => void;
   reset: () => void;
   updateLayout: (layout: LayoutResult) => void;
+  /** Names of flows that currently have at least one live particle. */
+  getActiveFlows: () => Set<string>;
+  /** Returns the flow name of the particle nearest (diagX, diagY) within
+   *  `hitRadius` diagram units, or null. Used for paused-state hover. */
+  hitTestParticle: (diagX: number, diagY: number, hitRadius: number) => string | null;
 }
 
 export function createAnimationLoop(
@@ -204,6 +210,41 @@ export function createAnimationLoop(
       if (state.ast) {
         particleSystem.init(state.ast, layout);
       }
+    },
+    getActiveFlows() {
+      const flows = new Set<string>();
+      for (const p of particleSystem.particles) flows.add(p.flowName);
+      return flows;
+    },
+    hitTestParticle(diagX: number, diagY: number, hitRadius: number) {
+      if (!currentLayout) return null;
+      const state = getState();
+      // Use effective edges so hover honors collapsed-group rerouting.
+      const collapsedGroups = computeCollapsedGroups(
+        currentLayout,
+        // Scale doesn't affect collapsed-set when called from a paused
+        // hover — the caller already used the on-screen scale to size the
+        // hit radius. Pass 1 so we don't re-collapse anything mid-hover.
+        1,
+        state.collapseThresholdPx,
+        state.manualCollapsed,
+      );
+      const effective = computeEffectiveEdges(currentLayout, collapsedGroups);
+
+      let best: { name: string; distSq: number } | null = null;
+      const r2 = hitRadius * hitRadius;
+      for (const p of particleSystem.particles) {
+        const eff = effective.get(p.edgeId);
+        if (!eff || eff.suppressed || eff.points.length < 2) continue;
+        const pos = pointAtProgress(eff.points, p.progress);
+        const dx = pos.x - diagX;
+        const dy = pos.y - diagY;
+        const d2 = dx * dx + dy * dy;
+        if (d2 <= r2 && (!best || d2 < best.distSq)) {
+          best = { name: p.flowName, distSq: d2 };
+        }
+      }
+      return best?.name ?? null;
     },
   };
 }

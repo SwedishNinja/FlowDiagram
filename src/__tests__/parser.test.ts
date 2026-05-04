@@ -864,6 +864,63 @@ component "A" as a
     });
   });
 
+  describe('annotations', () => {
+    it('parses one @annotate block per flow', () => {
+      const input = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+@flow login on c1
+  data: "JWT"
+  every: 500ms
+@flow check on c1
+  data: "ping"
+  every: 1s
+@annotate login {
+  info: "Quoted text. Has a comma, period, and colons: like this."
+}
+@annotate check {
+  info: Plain text without quotes
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.document.annotations).toEqual([
+        { target: 'login', info: 'Quoted text. Has a comma, period, and colons: like this.' },
+        { target: 'check', info: 'Plain text without quotes' },
+      ]);
+    });
+
+    it('rejects @annotate that targets an unknown flow', () => {
+      const input = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+@annotate ghost {
+  info: "Nope"
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toMatch(/unknown flow "ghost"/);
+    });
+
+    it('defaults annotations to an empty array when no block present', () => {
+      const input = `@startuml
+component "A" as a
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.document.annotations).toEqual([]);
+    });
+  });
+
   describe('error handling', () => {
     it('returns parse error with location for invalid syntax', () => {
       const input = `@startuml

@@ -1,6 +1,6 @@
 // @ts-expect-error - generated JS file without types
 import { parse as peggyParse } from './generated.js';
-import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode } from '../types';
+import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode, AnnotateNode } from '../types';
 
 export interface ParseError {
   message: string;
@@ -37,6 +37,7 @@ interface RawParseResult {
   groups: GroupNode[];
   stages?: StageNode[];
   positions: Record<string, { x: number; y: number }>;
+  annotations?: AnnotateNode[];
 }
 
 /** Auto-generate connection IDs for unnamed connections */
@@ -120,6 +121,17 @@ function validate(doc: FlowDocument): ParseError | null {
     }
   }
 
+  // Annotations must target an existing flow.
+  for (const ann of doc.annotations) {
+    if (!flowNames.has(ann.target)) {
+      return {
+        message: `Annotation targets unknown flow "${ann.target}"`,
+        line: 0,
+        column: 0,
+      };
+    }
+  }
+
   // Cycle detection on stage deps.
   const stageVisited = new Set<string>();
   const stageVisiting = new Set<string>();
@@ -163,6 +175,7 @@ export function parse(input: string): ParseResult {
       groups: raw.groups ?? [],
       stages: raw.stages ?? [],
       positions: raw.positions ?? {},
+      annotations: raw.annotations ?? [],
     };
     const validationError = validate(document);
     if (validationError) {

@@ -220,6 +220,69 @@ package "P" as p {
     expect(grownP.width * grownP.height).toBeGreaterThan(baselineP.width * baselineP.height);
   });
 
+  it('intra-package edge endpoints land on their nodes (no container offset bug)', async () => {
+    // Regression: ELK keeps intra-package edges in `root.edges` but tags them
+    // with `container: <package>`, so section coords are package-relative.
+    // flattenElk must offset by the container's absolute origin, otherwise
+    // edges land near the canvas origin and visually disconnect.
+    const source = `@startuml
+package "P" as p {
+  component "A" as a
+  component "B" as b
+}
+a -> b as c1
+@enduml
+`;
+    const layout = await computeLayout(parseDoc(source));
+    const a = layout.nodes.find(n => n.id === 'a')!;
+    const b = layout.nodes.find(n => n.id === 'b')!;
+    const edge = layout.edges.find(e => e.id === 'c1')!;
+    const p0 = edge.points[0]!;
+    const pN = edge.points[edge.points.length - 1]!;
+
+    const onBox = (p: { x: number; y: number }, n: { x: number; y: number; width: number; height: number }) =>
+      p.x >= n.x - 1 && p.x <= n.x + n.width + 1 && p.y >= n.y - 1 && p.y <= n.y + n.height + 1;
+
+    expect(onBox(p0, a)).toBe(true);
+    expect(onBox(pN, b)).toBe(true);
+  });
+
+  it('intra-package edges stay attached after a group-only @positions override', async () => {
+    // Files saved before per-descendant @positions existed only have a group
+    // override. Intra-package edge polylines must end up attached to their
+    // (translated) component borders.
+    const source = `@startuml
+package "P1" as p1 {
+  component "A" as a
+  component "B" as b
+}
+package "P2" as p2 {
+  component "X" as x
+  component "Y" as y
+}
+a -> b as e1
+x -> y as e2
+a -> x as e3
+
+@positions
+  p1: 200, 300
+  p2: 800, 300
+@enduml
+`;
+    const layout = await computeLayout(parseDoc(source));
+    const onBox = (p: { x: number; y: number }, n: { x: number; y: number; width: number; height: number }) =>
+      p.x >= n.x - 1 && p.x <= n.x + n.width + 1 && p.y >= n.y - 1 && p.y <= n.y + n.height + 1;
+
+    for (const edge of layout.edges) {
+      const src = layout.nodes.find(n => n.id === edge.source)!;
+      const tgt = layout.nodes.find(n => n.id === edge.target)!;
+      const p0 = edge.points[0]!;
+      const pN = edge.points[edge.points.length - 1]!;
+      expect(onBox(p0, src), `${edge.id} start should sit on ${src.id}`).toBe(true);
+      expect(onBox(pN, tgt), `${edge.id} end should sit on ${tgt.id}`).toBe(true);
+    }
+  });
+
   it('group @positions override translates the whole subtree rigidly', async () => {
     // Lay out first with no overrides to capture the relative arrangement.
     const sourceNoOverride = `@startuml

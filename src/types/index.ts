@@ -7,6 +7,16 @@ export interface FlowDocument {
   stages: StageNode[];
   /** Component position overrides by alias (from @positions block) */
   positions: Record<string, { x: number; y: number }>;
+  /** Per-flow annotations from @annotate blocks. */
+  annotations: AnnotateNode[];
+}
+
+/** Free-form explanatory text attached to a single flow. */
+export interface AnnotateNode {
+  /** Flow name this annotation describes. */
+  target: string;
+  /** Explanatory text. May contain newlines. */
+  info: string;
 }
 
 /** A component (box) in the diagram */

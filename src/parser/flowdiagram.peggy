@@ -11,6 +11,7 @@ Body
     const groups = [];
     const stages = [];
     const positions = {};
+    const annotations = [];
     // Deferred references: each entry is { parentId, refId }. Resolved
     // after all declarations so forward references work.
     const referenceRequests = [];
@@ -77,6 +78,9 @@ Body
           if (p) positions[p.id] = { x: p.x, y: p.y };
         }
       }
+      else if (entry.type === 'annotate') {
+        annotations.push({ target: entry.target, info: entry.info });
+      }
     }
 
     for (const entry of entries) ingest(entry);
@@ -101,7 +105,7 @@ Body
       // rearranges via parentGroup pointers only.
     }
 
-    return { components, connections, flows, groups, stages, positions };
+    return { components, connections, flows, groups, stages, positions, annotations };
   }
 
 // Entry handles newlines: single-line statements consume one NL,
@@ -111,6 +115,7 @@ Entry
   = pkg:Package { return pkg; }
   / stage:StageBlock { return stage; }
   / pb:PositionsBlock { return pb; }
+  / ab:AnnotateBlock { return ab; }
   / fb:FlowBlock { return fb; }
   / _ stmt:(Component / Connection / Comment) _ NL { return stmt; }
   / _ NL { return null; }
@@ -357,6 +362,39 @@ PositionEntry
 SignedNumber
   = sign:"-"? n:Number
   { return sign ? -n : n; }
+
+// --- Annotate Block ---
+// Adds explanatory text for a single flow. One block per annotation.
+//
+// @annotate flowName {
+//   info: "Lots of text describing what this flow does."
+// }
+//
+// `info:` accepts a quoted string (which may span multiple lines) or
+// any unquoted text up to end-of-line.
+
+AnnotateBlock
+  = _ "@annotate" WS+ target:Alias _ "{" _ NL parts:AnnotateProperty* _ "}" _ NL
+  {
+    let info = '';
+    for (const p of parts) {
+      if (!p) continue;
+      if (p.key === 'info') info = p.value;
+    }
+    return { type: 'annotate', target, info };
+  }
+
+AnnotateProperty
+  = _ "info:" _ value:(QuotedString / FreeText) _ NL
+  { return { key: 'info', value }; }
+  / _ Comment NL
+  { return null; }
+  / _ NL
+  { return null; }
+
+FreeText
+  = chars:[^\n\r}]+
+  { return chars.join('').trim(); }
 
 Direction
   = "reverse" { return 'reverse'; }

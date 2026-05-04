@@ -66,7 +66,8 @@ flowdiagram/
       recomputeEdges.ts   # Live edge rerouting during node drag
     renderer/
       FlowCanvas.tsx      # Canvas React component; pointer/wheel handling, group drag, toggle icon hit-test
-      animationLoop.ts    # rAF loop, transform, collapse + manual-collapse detection
+      AnnotationsPanel.tsx # Side panel showing per-flow @annotate text; highlights active / hovered flows
+      animationLoop.ts    # rAF loop, transform, collapse + manual-collapse detection, particle hit-test
       drawGraph.ts        # Static scene: nodes, edges, groups, parallel-edge fan-out, collapse toggle icons
       drawParticles.ts    # Shared particle renderer (live canvas + both exporters)
       particles.ts        # Particle emission + flow dependencies + stage lifecycle
@@ -145,6 +146,7 @@ auth -> gw as result_conn : auth result
 - **Package**: `package "Name" as alias [#color] { ... }` — groups components. Can contain components, connections, `@flow` blocks, **nested packages** to any depth, and **references to other packages** (`package <alias>` — pulls a package declared elsewhere into this subtree). A package can be referenced by at most one parent. References may be forward — the referenced package doesn't have to be declared yet. Optional hex `#color` on the header tints the border + fill. Optional `collapse_at: Npx` property line (see "Collapsing" below). **Packages auto-resize to fit their contents** — dragging a component or nested package beyond the box grows the parent automatically.
 - **@flow**: see below
 - **@positions**: absolute center coordinates for components AND packages (used by drag-to-move persistence). One entry per line: `alias: x, y`. When a package is dragged, entries are written for the package plus every descendant that rode along — each element independently pins its absolute location so auto-resize can't shift anything on reload.
+- **@annotate**: free-form explanation attached to a single flow (see below).
 - **Comments**: `' single line` or `/' multi-line '/`
 
 ### @flow block properties
@@ -170,6 +172,25 @@ auth -> gw as result_conn : auth result
 **Flows with `after:`** are event-driven: each time ALL listed upstream flows have an unconsumed arrival, the dependent flow spawns exactly one particle and consumes one arrival from each dependency. `start_delay:` adds a per-arrival latency (models response latency). `every:`/`freq:` is ignored.
 
 **Reverse flows** (`direction: reverse`) spawn particles at the target end of the connection and travel to the source — useful for request/response patterns on a single connection.
+
+### @annotate blocks
+
+Per-flow explanation text. One block per annotation.
+
+```
+@annotate login {
+  info: "Browser POSTs credentials. Validates against the user store and mints a JWT."
+}
+
+@annotate session_check {
+  info: "Each authenticated request hits Redis to confirm the session is still live."
+}
+```
+
+- Header is `@annotate <flowName> { ... }` — same identifier rules as everywhere else.
+- `info:` accepts a quoted string (multi-line OK — newlines are preserved) or unquoted text up to end-of-line.
+- The parser rejects annotations that target a flow that doesn't exist.
+- Annotations show in the side panel during playback (see "Annotations panel" below).
 
 ### @stage blocks (scenario grouping)
 
@@ -221,6 +242,16 @@ Stage semantics:
 - **Zoom out and flows stay readable** → particles, edge lines, arrowheads, and flow labels are zoom-compensated below 1× so overview views remain useful. Package chrome still scales down, so you still see more tiles at once.
 - **Edit source text** → live parse (300ms debounce) → re-layout → re-render. Parse errors underline the offending line in red.
 
+### Annotations panel
+
+When the document contains any `@annotate` block, a panel appears on the right edge of the canvas:
+
+- **While playing**: rows for flows with at least one live particle are highlighted; idle flows fade.
+- **While paused**: hover any particle on the canvas — the row for that particle's flow lights up and scrolls into view. Move off and the highlight clears.
+- **No annotations** in the document → no panel.
+
+This is read-only: the panel never blocks pointer events on the underlying canvas except over its own area.
+
 ### Toolbar
 
 | Control | Purpose |
@@ -266,14 +297,14 @@ When running in Electron (`window.electronAPI` is present):
 
 ## Tests
 
-- `parser.test.ts` — DSL parsing (components, connections, flows, groups, nested packages, package references, colors, `collapse_at`, stages, errors)
-- `layout.test.ts` — ELK integration, @positions overrides (absolute), group auto-resize, parallel-edge fan-out
+- `parser.test.ts` — DSL parsing (components, connections, flows, groups, nested packages, package references, colors, `collapse_at`, stages, annotations, errors)
+- `layout.test.ts` — ELK integration, @positions overrides (absolute), group auto-resize, parallel-edge fan-out, intra-package edge routing
 - `stages.test.ts` — stage lifecycle state machine, dependencies, repeat, once-per-initiation
 - `pathUtils.test.ts` — polyline math
 - `colorUtils.test.ts` — color normalization
 - `updatePositions.test.ts` — round-tripping `@positions` blocks
 
-84 tests total.
+89 tests total.
 
 ## Not Implemented (Possible Next Steps)
 

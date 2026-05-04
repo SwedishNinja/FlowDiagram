@@ -132,11 +132,34 @@ interface ElkWalkResult {
 /**
  * Walk the laid-out ELK tree and flatten coordinates to absolute diagram
  * coords. ELK returns positions relative to each node's parent container.
+ *
+ * Edges are tricky: with `hierarchyHandling: INCLUDE_CHILDREN`, ELK keeps
+ * edges in the array where they were declared (root, in our case) but tags
+ * each one with a `container` field naming the container its section
+ * coordinates are relative to. So for an intra-package edge, sections are
+ * package-relative even though the edge sits on `root.edges`. We therefore
+ * collect all node positions first, then resolve each edge against its
+ * declared container's absolute origin.
  */
 function flattenElk(root: ElkNode, componentIds: Set<string>): ElkWalkResult {
   const nodes = new Map<string, { x: number; y: number; width: number; height: number }>();
   const groups = new Map<string, { x: number; y: number; width: number; height: number }>();
   const edges = new Map<string, { points: Point[] }>();
+
+  // containerOrigin maps any container id (including 'root') to its absolute
+  // top-left, so edge sections can be offset by their own container's origin.
+  const containerOrigin = new Map<string, { x: number; y: number }>();
+  containerOrigin.set('root', { x: 0, y: 0 });
+
+  type EdgeWithContainer = ElkExtendedEdge & {
+    sections?: Array<{
+      startPoint: Point;
+      endPoint: Point;
+      bendPoints?: Point[];
+    }>;
+    container?: string;
+  };
+  const pendingEdges: Array<{ edge: EdgeWithContainer; fallback: { x: number; y: number } }> = [];
 
   function walk(node: ElkNode, parentX: number, parentY: number) {
     const absX = parentX + (node.x ?? 0);
@@ -148,36 +171,36 @@ function flattenElk(root: ElkNode, componentIds: Set<string>): ElkWalkResult {
         nodes.set(node.id, box);
       } else {
         groups.set(node.id, box);
+        containerOrigin.set(node.id, { x: absX, y: absY });
       }
     }
 
-    // ELK edges on a container store their coordinates relative to that container.
+    // Defer edge processing until we know every container's origin.
     for (const edge of node.edges ?? []) {
-      const elkEdge = edge as ElkExtendedEdge & {
-        sections?: Array<{
-          startPoint: Point;
-          endPoint: Point;
-          bendPoints?: Point[];
-        }>;
-      };
-      if (!elkEdge.sections) continue;
-      const points: Point[] = [];
-      for (const section of elkEdge.sections) {
-        points.push({ x: section.startPoint.x + absX, y: section.startPoint.y + absY });
-        if (section.bendPoints) {
-          for (const bp of section.bendPoints) {
-            points.push({ x: bp.x + absX, y: bp.y + absY });
-          }
-        }
-        points.push({ x: section.endPoint.x + absX, y: section.endPoint.y + absY });
-      }
-      edges.set(edge.id!, { points });
+      pendingEdges.push({ edge: edge as EdgeWithContainer, fallback: { x: absX, y: absY } });
     }
 
     for (const child of node.children ?? []) walk(child, absX, absY);
   }
 
   walk(root, 0, 0);
+
+  for (const { edge, fallback } of pendingEdges) {
+    if (!edge.sections) continue;
+    const origin = (edge.container && containerOrigin.get(edge.container)) || fallback;
+    const points: Point[] = [];
+    for (const section of edge.sections) {
+      points.push({ x: section.startPoint.x + origin.x, y: section.startPoint.y + origin.y });
+      if (section.bendPoints) {
+        for (const bp of section.bendPoints) {
+          points.push({ x: bp.x + origin.x, y: bp.y + origin.y });
+        }
+      }
+      points.push({ x: section.endPoint.x + origin.x, y: section.endPoint.y + origin.y });
+    }
+    edges.set(edge.id!, { points });
+  }
+
   return { nodes, groups, edges };
 }
 

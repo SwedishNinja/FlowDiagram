@@ -51,6 +51,10 @@ export interface FlowStore {
    *  and stages. Any consumer can subscribe and react. */
   particleResetSignal: number;
   triggerParticleReset: () => void;
+
+  /** Flow name currently hovered while paused (for the annotation panel). */
+  hoveredFlow: string | null;
+  setHoveredFlow: (name: string | null) => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -150,5 +154,8 @@ export const useFlowStore = create<FlowStore>()(
 
     particleResetSignal: 0,
     triggerParticleReset: () => set((s) => ({ particleResetSignal: s.particleResetSignal + 1 })),
+
+    hoveredFlow: null,
+    setHoveredFlow: (hoveredFlow) => set({ hoveredFlow }),
   })),
 );

@@ -26,11 +26,13 @@ export function drawParticles(
   const labelPad = PARTICLE_LABEL_PAD_H * zc;
   const labelH = PARTICLE_LABEL_HEIGHT * zc;
 
-  // Leading particle of each flow gets the data label. Forward = highest
-  // progress first, reverse = lowest first.
+  // Youngest particle of each flow gets the data label, so the label rides
+  // the same dot from spawn to arrival instead of bouncing between particles
+  // crowded near the end of the path. Forward = lowest progress first,
+  // reverse = highest first.
   const sorted = [...particleSystem.particles].sort((a, b) => {
     if (a.reverse !== b.reverse) return a.reverse ? 1 : -1;
-    return a.reverse ? a.progress - b.progress : b.progress - a.progress;
+    return a.reverse ? b.progress - a.progress : a.progress - b.progress;
   });
 
   for (const particle of sorted) {

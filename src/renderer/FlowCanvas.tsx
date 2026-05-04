@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, type MutableRefObject } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
 import { groupToggleRect, zoomCompensation } from './drawGraph';
@@ -91,7 +91,12 @@ const CORNER_TO_CURSOR: Record<Corner, string> = {
   sw: 'nesw-resize',
 };
 
-export default function FlowCanvas() {
+interface FlowCanvasProps {
+  /** Optional out-ref so siblings (e.g. AnnotationsPanel) can call into the controller. */
+  controllerOutRef?: MutableRefObject<AnimationController | null>;
+}
+
+export default function FlowCanvas({ controllerOutRef }: FlowCanvasProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<AnimationController | null>(null);
   const dragRef = useRef<DragState | null>(null);
@@ -120,13 +125,15 @@ export default function FlowCanvas() {
     }));
 
     controllerRef.current = controller;
+    if (controllerOutRef) controllerOutRef.current = controller;
     controller.start();
 
     return () => {
       controller.stop();
       controllerRef.current = null;
+      if (controllerOutRef) controllerOutRef.current = null;
     };
-  }, []);
+  }, [controllerOutRef]);
 
   useEffect(() => {
     if (layout && controllerRef.current) {
@@ -140,6 +147,12 @@ export default function FlowCanvas() {
     if (particleResetSignal === 0) return;
     controllerRef.current?.reset();
   }, [particleResetSignal]);
+
+  // Hovered flow is a paused-only concept; drop it as soon as playback resumes.
+  const isPlaying = useFlowStore((s) => s.isPlaying);
+  useEffect(() => {
+    if (isPlaying) useFlowStore.getState().setHoveredFlow(null);
+  }, [isPlaying]);
 
   const findNodeAt = useCallback((x: number, y: number, effectiveScale?: number): LayoutNode | null => {
     const current = useFlowStore.getState().layout;
@@ -438,6 +451,19 @@ export default function FlowCanvas() {
         if (hit) { canvas.style.cursor = CORNER_TO_CURSOR[hit]; return; }
       }
       const coords = getDiagramCoords(e);
+      // Particle hover (paused only): drives the annotation panel highlight.
+      const setHoveredFlow = useFlowStore.getState().setHoveredFlow;
+      const isPlaying = useFlowStore.getState().isPlaying;
+      if (!isPlaying && coords && controllerRef.current) {
+        const t = getTransform();
+        const scale = t?.transform.scale ?? 1;
+        // 12 CSS px feels right; convert to diagram units.
+        const hitRadius = 12 / Math.max(scale, 0.0001);
+        const flow = controllerRef.current.hitTestParticle(coords.x, coords.y, hitRadius);
+        if (flow !== useFlowStore.getState().hoveredFlow) setHoveredFlow(flow);
+      } else if (useFlowStore.getState().hoveredFlow !== null) {
+        setHoveredFlow(null);
+      }
       if (coords) {
         const t = getTransform();
         if (t && findToggleAt(coords.x, coords.y, t.transform.scale)) {

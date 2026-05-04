@@ -3,6 +3,8 @@ import { useFlowStore } from './store/flowStore';
 import { parse } from './parser/parser';
 import { computeLayout } from './layout/layoutEngine';
 import FlowCanvas from './renderer/FlowCanvas';
+import AnnotationsPanel from './renderer/AnnotationsPanel';
+import type { AnimationController } from './renderer/animationLoop';
 import FlowEditor from './editor/FlowEditor';
 import { exportGif, computeLayoutBounds, downloadBlob } from './renderer/exportGif';
 import { exportVideo, downloadVideoBlob } from './renderer/exportVideo';
@@ -522,6 +524,9 @@ export default function App() {
 
   const { currentPath, openFile, saveFile, newFile, loadFile } = useElectronFile();
 
+  // Shared between FlowCanvas (writes) and AnnotationsPanel (reads).
+  const controllerRef = useRef<AnimationController | null>(null);
+
   // Editor panel width (in CSS px) — draggable splitter persists this.
   const [editorWidth, setEditorWidth] = useState<number>(() => {
     try {
@@ -719,7 +724,8 @@ export default function App() {
           onNewFile={newFile}
         />
         <div style={{ flex: 1, position: 'relative' }}>
-          <FlowCanvas />
+          <FlowCanvas controllerOutRef={controllerRef} />
+          <AnnotationsPanel controllerRef={controllerRef} />
         </div>
       </div>
     </div>
