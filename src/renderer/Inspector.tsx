@@ -10,10 +10,13 @@ import type { ComponentNode, ConnectionNode, FlowNode } from '../types';
  */
 export default function Inspector() {
   const ast = useFlowStore((s) => s.ast);
-  const selectedId = useFlowStore((s) => s.selectedId);
+  const selectedIds = useFlowStore((s) => s.selectedIds);
   const selectionKind = useFlowStore((s) => s.selectionKind);
 
-  if (!ast || !selectedId || !selectionKind) return null;
+  // Multi-selection of components is handled by a separate popover, not this
+  // panel. Single-selection is the only case where we render here.
+  if (!ast || selectedIds.length !== 1 || !selectionKind) return null;
+  const selectedId = selectedIds[0]!;
 
   let body: React.ReactNode = null;
   if (selectionKind === 'component') {

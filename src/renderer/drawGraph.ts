@@ -36,11 +36,10 @@ export interface DrawOptions {
    * is applied — everything scales up proportionally.
    */
   scale?: number;
-  /** ID of the currently-selected node or connection. The renderer
-   *  interprets this against `selectionKind` to highlight a node ring or an
-   *  edge stroke. */
-  selectedId?: string | null;
-  /** Which family `selectedId` belongs to. */
+  /** IDs of the currently-selected entities. All members share the same
+   *  selectionKind. The renderer highlights node rings or edge strokes
+   *  according to that kind. */
+  selectedIds?: ReadonlyArray<string> | null;
   selectionKind?: 'component' | 'connection' | 'flow' | null;
   /** ID of the node the pointer is currently hovering over (when not dragging).
    *  Used to surface the connection-create handles. */
@@ -657,24 +656,26 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
   // 2. Edges — use effectiveEdges (rerouted + suppression info).
   const effectiveEdges = options.effectiveEdges;
   const labelOpacity = edgeLabelOpacity(options.scale);
-  const selectedConnectionId =
-    options.selectionKind === 'connection' ? options.selectedId : null;
+  const selectedConnectionIds = new Set<string>(
+    options.selectionKind === 'connection' ? options.selectedIds ?? [] : [],
+  );
   for (const edge of layout.edges) {
     const eff = effectiveEdges?.get(edge.id);
     if (eff?.suppressed) continue;
     const points = eff?.points ?? edge.points;
-    drawEdge(ctx, edge, points, background, zc, labelOpacity, edge.id === selectedConnectionId);
+    drawEdge(ctx, edge, points, background, zc, labelOpacity, selectedConnectionIds.has(edge.id));
   }
 
   // 3. Nodes — hide when inside a collapsed ancestor.
-  const selectedComponentId =
-    options.selectionKind === 'component' ? options.selectedId ?? null : null;
+  const selectedComponentIds = new Set<string>(
+    options.selectionKind === 'component' ? options.selectedIds ?? [] : [],
+  );
   const hoveredId = options.hoveredId ?? null;
   const draft = options.connectionDraft ?? null;
   const rewire = options.rewireDraft ?? null;
   for (const node of layout.nodes) {
     if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
-    const isSelected = node.id === selectedComponentId;
+    const isSelected = selectedComponentIds.has(node.id);
     const isDropTarget = draft?.targetId === node.id || rewire?.targetId === node.id;
     drawNode(ctx, node, isSelected || isDropTarget);
   }
@@ -695,10 +696,12 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
     }
   }
 
-  // 5. Rewire handles on the selected connection's endpoints. These render
-  //    last so they sit on top of the edge stroke and arrowhead.
-  if (selectedConnectionId && !rewire) {
-    const sel = layout.edges.find((e) => e.id === selectedConnectionId);
+  // 5. Rewire handles on the (single) selected connection's endpoints.
+  //    Multi-selecting connections isn't a current UI gesture, so we only
+  //    draw endpoint handles when exactly one is selected.
+  if (selectedConnectionIds.size === 1 && !rewire) {
+    const onlyId = selectedConnectionIds.values().next().value!;
+    const sel = layout.edges.find((e) => e.id === onlyId);
     if (sel) {
       const eff = effectiveEdges?.get(sel.id);
       const points = eff?.points ?? sel.points;

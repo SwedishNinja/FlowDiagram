@@ -114,6 +114,15 @@ function renameInComponentLine(line: string, oldId: string, newId: string): stri
 /** Pick the lowest-numbered `${prefix}N` alias that doesn't collide with any
  *  existing ID in the document (components, groups, connections, or flows). */
 export function generateUniqueComponentId(doc: FlowDocument, prefix: string = 'node'): string {
+  return generateUniqueId(doc, prefix);
+}
+
+/** Same as generateUniqueComponentId but with a flow-friendly default prefix. */
+export function generateUniqueFlowName(doc: FlowDocument, prefix: string = 'flow'): string {
+  return generateUniqueId(doc, prefix);
+}
+
+function generateUniqueId(doc: FlowDocument, prefix: string): string {
   const taken = new Set<string>([
     ...doc.components.map((c) => c.id),
     ...doc.groups.map((g) => g.id),
@@ -123,6 +132,109 @@ export function generateUniqueComponentId(doc: FlowDocument, prefix: string = 'n
   let n = 1;
   while (taken.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
+}
+
+/**
+ * Return the first connection that runs between the two given component IDs.
+ * Priority: prefer `first → second` over `second → first` (so click order
+ * decides the direction). Returns the connection plus a `reverseToMatchOrder`
+ * flag — true when the connection's direction is opposite to the user's
+ * intended (first → second) order, hinting that the resulting flow may want
+ * to set `direction: reverse`.
+ */
+export function findConnectionBetween(
+  doc: FlowDocument,
+  first: string,
+  second: string,
+): { connection: ConnectionNodeWithLoc; reverseToMatchOrder: boolean } | null {
+  for (const conn of doc.connections) {
+    if (conn.source === first && conn.target === second) {
+      return { connection: conn, reverseToMatchOrder: false };
+    }
+  }
+  for (const conn of doc.connections) {
+    if (conn.source === second && conn.target === first) {
+      return { connection: conn, reverseToMatchOrder: true };
+    }
+  }
+  return null;
+}
+
+type ConnectionNodeWithLoc = FlowDocument['connections'][number];
+
+/**
+ * Append a new @flow block. Optional fields default to a sensible canonical
+ * flow: every 1000ms, 1500ms traverse time, forward direction. Insertion
+ * order: after the last flow, else after the last connection (with blank
+ * line), else before @positions / @enduml.
+ */
+export function createFlow(
+  text: string,
+  doc: FlowDocument,
+  opts: {
+    name: string;
+    connection: string;
+    data?: string | null;
+    color?: string | null;
+    intervalMs?: number;
+    hasRate?: boolean;
+    traverseTimeMs?: number;
+    direction?: 'forward' | 'reverse';
+    startDelayMs?: number;
+    after?: string[];
+  },
+): string {
+  const intervalMs = opts.intervalMs ?? 1000;
+  const hasRate = opts.hasRate ?? true;
+  const traverseTimeMs = opts.traverseTimeMs ?? 1500;
+  const direction = opts.direction ?? 'forward';
+  const startDelayMs = opts.startDelayMs ?? 0;
+  const after = opts.after ?? [];
+
+  const lines: string[] = [`@flow ${opts.name} on ${opts.connection}`];
+  if (opts.data) lines.push(`  data: "${opts.data}"`);
+  if (hasRate) lines.push(`  every: ${Math.round(intervalMs)}ms`);
+  lines.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
+  if (startDelayMs > 0) lines.push(`  start_delay: ${Math.round(startDelayMs)}ms`);
+  if (direction === 'reverse') lines.push(`  direction: reverse`);
+  if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
+  if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
+  const block = lines.join('\n') + '\n';
+
+  let anchorEnd = -1;
+  let needsBlankLine = false;
+
+  for (const f of doc.flows) {
+    if (f.loc && f.loc.end > anchorEnd) anchorEnd = f.loc.end;
+  }
+  if (anchorEnd === -1) {
+    for (const c of doc.connections) {
+      if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
+    }
+    if (anchorEnd !== -1) needsBlankLine = true;
+  }
+
+  if (anchorEnd === -1) {
+    const positionsIdx = text.indexOf('@positions');
+    const endumlIdx = text.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      return text + (text.endsWith('\n') ? '' : '\n') + block;
+    }
+    const before = Math.min(...candidates);
+    return text.slice(0, before) + block + '\n' + text.slice(before);
+  }
+
+  let pos = anchorEnd;
+  if (text[pos - 1] !== '\n') {
+    if (text[pos] === '\r') pos++;
+    if (text[pos] === '\n') pos++;
+  }
+  const insertion =
+    pos === anchorEnd && text[pos - 1] !== '\n'
+      ? '\n' + block
+      : (needsBlankLine ? '\n' : '') + block;
+  return text.slice(0, pos) + insertion + text.slice(pos);
 }
 
 /**

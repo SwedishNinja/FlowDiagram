@@ -52,12 +52,17 @@ export interface FlowStore {
   particleResetSignal: number;
   triggerParticleReset: () => void;
 
-  /** Currently selected entity. Components are selected by clicking the
-   *  rectangle, connections by clicking the polyline, flows by clicking a
-   *  chip in the connection inspector. */
-  selectedId: string | null;
+  /** Currently selected entities. All items in the array share the same
+   *  `selectionKind` — mixed-kind selection isn't supported. The first item
+   *  is the primary (used as `selectedId` for single-kind inspectors). */
+  selectedIds: string[];
   selectionKind: 'component' | 'connection' | 'flow' | null;
+  /** Replace the selection with a single entity. */
   setSelection: (id: string, kind: 'component' | 'connection' | 'flow') => void;
+  /** Extend the selection. If the kind doesn't match the current set, the
+   *  selection is replaced instead. If the id is already in the set, it
+   *  is removed (toggle behavior). */
+  addToSelection: (id: string, kind: 'component' | 'connection' | 'flow') => void;
   clearSelection: () => void;
 
   /** Active canvas tool. 'select' is the default — clicks select/drag nodes.
@@ -164,10 +169,24 @@ export const useFlowStore = create<FlowStore>()(
     particleResetSignal: 0,
     triggerParticleReset: () => set((s) => ({ particleResetSignal: s.particleResetSignal + 1 })),
 
-    selectedId: null,
+    selectedIds: [],
     selectionKind: null,
-    setSelection: (id, kind) => set({ selectedId: id, selectionKind: kind }),
-    clearSelection: () => set({ selectedId: null, selectionKind: null }),
+    setSelection: (id, kind) => set({ selectedIds: [id], selectionKind: kind }),
+    addToSelection: (id, kind) => set((s) => {
+      // Switching kinds always replaces — mixed-kind selections aren't supported.
+      if (s.selectionKind !== kind || s.selectedIds.length === 0) {
+        return { selectedIds: [id], selectionKind: kind };
+      }
+      const existing = s.selectedIds.indexOf(id);
+      if (existing >= 0) {
+        const next = s.selectedIds.filter((x) => x !== id);
+        return next.length === 0
+          ? { selectedIds: [], selectionKind: null }
+          : { selectedIds: next, selectionKind: s.selectionKind };
+      }
+      return { selectedIds: [...s.selectedIds, id], selectionKind: s.selectionKind };
+    }),
+    clearSelection: () => set({ selectedIds: [], selectionKind: null }),
 
     toolMode: 'select',
     setToolMode: (toolMode) => set({ toolMode }),

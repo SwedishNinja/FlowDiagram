@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
+import { parse } from '../parser/parser';
 import {
   groupToggleRect,
   zoomCompensation,
@@ -23,6 +24,7 @@ import {
   updateConnection,
 } from '../parser/textMutations';
 import Inspector from './Inspector';
+import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -204,7 +206,7 @@ export default function FlowCanvas() {
       exportFrame: useFlowStore.getState().showExportFrame ? useFlowStore.getState().exportFrame : null,
       collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
       manualCollapsed: useFlowStore.getState().manualCollapsed,
-      selectedId: useFlowStore.getState().selectedId,
+      selectedIds: useFlowStore.getState().selectedIds,
       selectionKind: useFlowStore.getState().selectionKind,
       hoveredId: hoveredIdRef.current,
       connectionDraft: connectionDraftRef.current,
@@ -290,9 +292,9 @@ export default function FlowCanvas() {
     y: number,
     effectiveScale: number,
   ): { end: 'source' | 'target'; anchor: { x: number; y: number }; connId: string } | null => {
-    const { selectedId, selectionKind, layout: current } = useFlowStore.getState();
-    if (!current || selectionKind !== 'connection' || !selectedId) return null;
-    const edge = current.edges.find((e) => e.id === selectedId);
+    const { selectedIds, selectionKind, layout: current } = useFlowStore.getState();
+    if (!current || selectionKind !== 'connection' || selectedIds.length !== 1) return null;
+    const edge = current.edges.find((e) => e.id === selectedIds[0]);
     if (!edge) return null;
     const ends = getConnectionEndpoints(edge.points);
     if (!ends) return null;
@@ -644,6 +646,14 @@ export default function FlowCanvas() {
     const node = findNodeAt(coords.x, coords.y, tForNode?.transform.scale);
 
     if (node) {
+      // Shift / cmd / ctrl extends the selection (toggle). Plain click replaces.
+      const extend = e.shiftKey || e.metaKey || e.ctrlKey;
+      if (extend) {
+        useFlowStore.getState().addToSelection(node.id, 'component');
+        // Don't enter a node drag — multi-selection is the user's intent.
+        e.preventDefault();
+        return;
+      }
       useFlowStore.getState().setSelection(node.id, 'component');
       dragRef.current = {
         kind: 'node',
@@ -1104,20 +1114,50 @@ export default function FlowCanvas() {
       }
 
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-      const { selectedId, selectionKind, ast, sourceText, setSourceText, clearSelection } =
+      const { selectedIds, selectionKind, ast, sourceText, setSourceText, clearSelection } =
         useFlowStore.getState();
-      if (!selectedId || !selectionKind || !ast) return;
+      if (selectedIds.length === 0 || !selectionKind || !ast) return;
       e.preventDefault();
+      // For multi-select we re-parse between deletes so each cascade walks
+      // valid loc ranges. Single-select stays a one-shot.
       let updated = sourceText;
-      if (selectionKind === 'component') updated = deleteComponent(sourceText, ast, selectedId);
-      else if (selectionKind === 'connection') updated = deleteConnection(sourceText, ast, selectedId);
-      else if (selectionKind === 'flow') updated = deleteFlow(sourceText, ast, selectedId);
+      let currentDoc: typeof ast | null = ast;
+      for (const id of selectedIds) {
+        if (!currentDoc) break;
+        if (selectionKind === 'component') updated = deleteComponent(updated, currentDoc, id);
+        else if (selectionKind === 'connection') updated = deleteConnection(updated, currentDoc, id);
+        else if (selectionKind === 'flow') updated = deleteFlow(updated, currentDoc, id);
+        if (selectedIds.length > 1) {
+          const r = parse(updated);
+          currentDoc = r.ok ? r.document : null;
+        }
+      }
       if (updated !== sourceText) setSourceText(updated);
       clearSelection();
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  // Snapshot the current canvas-to-screen transform for the popover. Computed
+  // on each render; pan/zoom updates only trigger a re-render via the
+  // `layout` dependency, so the popover position can lag during an active
+  // pan. Acceptable for now — the popover only matters between selection
+  // events.
+  function computePopoverTransform(): PopoverTransform | null {
+    const canvas = canvasRef.current;
+    const currentLayout = layout;
+    if (!canvas || !currentLayout) return null;
+    const rect = canvas.getBoundingClientRect();
+    return computeTransform(
+      rect.width,
+      rect.height,
+      currentLayout,
+      panRef.current.x,
+      panRef.current.y,
+      zoomRef.current,
+    );
+  }
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -1139,6 +1179,7 @@ export default function FlowCanvas() {
       />
       <ToolPalette activeTool={toolMode} />
       <Inspector />
+      <MultiSelectPopover transform={computePopoverTransform()} />
       {renameOverlay && (
         <RenameInput
           key={renameOverlay.nodeId}

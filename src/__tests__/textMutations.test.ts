@@ -3,10 +3,13 @@ import { parse } from '../parser/parser';
 import {
   appendConnection,
   createComponent,
+  createFlow,
   deleteComponent,
   deleteConnection,
   deleteFlow,
+  findConnectionBetween,
   generateUniqueComponentId,
+  generateUniqueFlowName,
   renameComponent,
   updateComponent,
   updateConnection,
@@ -465,6 +468,115 @@ a -> b as ab
     const out = updateFlow(src, doc, 'login', { color: null });
     expect(out).not.toContain('color:');
     parseOk(out);
+  });
+});
+
+describe('createFlow', () => {
+  it('appends after existing flows with sensible defaults', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow first on ab
+  every: 500ms
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createFlow(src, doc, { name: 'second', connection: 'ab' });
+    expect(out).toContain('@flow second on ab');
+    expect(out).toContain('every: 1000ms');
+    expect(out).toContain('traverse_time: 1500ms');
+    // Second flow must come after first.
+    expect(out.indexOf('@flow second')).toBeGreaterThan(out.indexOf('@flow first'));
+    parseOk(out);
+  });
+
+  it('respects data, color, direction, traverse, every options', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createFlow(src, doc, {
+      name: 'beep',
+      connection: 'ab',
+      data: 'ping',
+      color: 'aabbcc',
+      direction: 'reverse',
+      traverseTimeMs: 800,
+      intervalMs: 250,
+    });
+    expect(out).toContain('@flow beep on ab');
+    expect(out).toContain('data: "ping"');
+    expect(out).toContain('every: 250ms');
+    expect(out).toContain('traverse_time: 800ms');
+    expect(out).toContain('direction: reverse');
+    expect(out).toContain('color: #aabbcc');
+    parseOk(out);
+  });
+
+  it('inserts before @positions when present', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@positions
+  a: 0, 0
+  b: 200, 0
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createFlow(src, doc, { name: 'x', connection: 'ab' });
+    expect(out.indexOf('@flow x')).toBeLessThan(out.indexOf('@positions'));
+    parseOk(out);
+  });
+});
+
+describe('generateUniqueFlowName', () => {
+  it('skips names taken by any entity', () => {
+    const src = `@startuml
+component "A" as flow1
+component "B" as b
+flow1 -> b as ab
+
+@flow flow2 on ab
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(generateUniqueFlowName(doc)).toBe('flow3');
+  });
+});
+
+describe('findConnectionBetween', () => {
+  const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+c -> a as ca
+@enduml
+`;
+  it('prefers first→second over second→first', () => {
+    const doc = parseOk(src);
+    const ab = findConnectionBetween(doc, 'a', 'b');
+    expect(ab?.connection.id).toBe('ab');
+    expect(ab?.reverseToMatchOrder).toBe(false);
+  });
+  it('falls back to second→first and flags reverseToMatchOrder', () => {
+    const doc = parseOk(src);
+    const r = findConnectionBetween(doc, 'a', 'c');
+    expect(r?.connection.id).toBe('ca');
+    expect(r?.reverseToMatchOrder).toBe(true);
+  });
+  it('returns null when no connection exists either way', () => {
+    const doc = parseOk(src);
+    expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
   });
 });
 
