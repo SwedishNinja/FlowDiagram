@@ -1,3 +1,10 @@
+/** Byte offset range into the source text for an AST node. Used for surgical
+ *  text edits (rename, delete) that preserve user formatting. */
+export interface SourceLoc {
+  start: number;
+  end: number;
+}
+
 /** A parsed flow diagram document */
 export interface FlowDocument {
   components: ComponentNode[];
@@ -16,6 +23,7 @@ export interface ComponentNode {
   color?: string;       // hex or named color
   stereotype?: string;  // <<category>> label
   parentGroup?: string; // ID of containing group (from `package` block)
+  loc?: SourceLoc;      // byte offsets of this component's declaration in source
 }
 
 /** A group of components (a `package` block) */
@@ -40,6 +48,7 @@ export interface ConnectionNode {
   label?: string;
   lineStyle: 'solid' | 'dotted';
   arrowStyle: 'forward' | 'long' | 'bidirectional';
+  loc?: SourceLoc;      // byte offsets of this connection's declaration
 }
 
 /** A named flow that animates particles along a connection */
@@ -57,6 +66,7 @@ export interface FlowNode {
   stage?: string;
   /** True if the flow was declared with freq:/every: (repeats while its stage is running). */
   hasRate?: boolean;
+  loc?: SourceLoc;                    // byte offsets of the @flow block (header + properties)
 }
 
 /** A stage — a named group of flows with shared lifecycle. */

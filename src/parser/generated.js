@@ -437,6 +437,7 @@ function peg$parse(input, options) {
       displayName,
       color: color ? color[2] : undefined,
       stereotype: stereotype ? stereotype[1] : undefined,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
   function peg$f28(displayName, id, color, stereotype) {
@@ -446,6 +447,7 @@ function peg$parse(input, options) {
       displayName,
       color: color ? color[2] : undefined,
       stereotype: stereotype ? stereotype[1] : undefined,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
   function peg$f29(source, arrow, target, nameClause, labelClause) {
@@ -466,6 +468,7 @@ function peg$parse(input, options) {
       label,
       lineStyle,
       arrowStyle,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
   function peg$f30(chars) {    return chars.join('').trim();  }
@@ -507,6 +510,7 @@ function peg$parse(input, options) {
       else if (prop.key === 'color') result.color = prop.value;
       else if (prop.key === 'after') result.after = prop.value;
     }
+    result.loc = { start: location().start.offset, end: location().end.offset };
     return result;
   }
   function peg$f32(value) {    return { key: 'data', value };  }

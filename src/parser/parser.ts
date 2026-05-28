@@ -1,6 +1,6 @@
 // @ts-expect-error - generated JS file without types
 import { parse as peggyParse } from './generated.js';
-import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode } from '../types';
+import type { FlowDocument, ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode, SourceLoc } from '../types';
 
 export interface ParseError {
   message: string;
@@ -24,6 +24,7 @@ interface RawConnection {
   label?: string;
   lineStyle: 'solid' | 'dotted';
   arrowStyle: 'forward' | 'long' | 'bidirectional';
+  loc?: SourceLoc;
 }
 
 interface RawFlow extends FlowNode {
@@ -49,6 +50,7 @@ function assignConnectionIds(connections: RawConnection[]): ConnectionNode[] {
     label: conn.label,
     lineStyle: conn.lineStyle,
     arrowStyle: conn.arrowStyle,
+    loc: conn.loc,
   }));
 }
 

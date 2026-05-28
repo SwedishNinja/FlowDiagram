@@ -122,6 +122,8 @@ export function createAnimationLoop(
     collapseThresholdPx?: number;
     /** User-pinned collapsed packages (force collapsed regardless of zoom). */
     manualCollapsed?: Record<string, true>;
+    /** Currently selected node ID — drawn with a highlight ring. */
+    selectedId?: string | null;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -163,7 +165,7 @@ export function createAnimationLoop(
 
     const zc = zoomCompensation(scale);
 
-    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges, scale });
+    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges, scale, selectedId: state.selectedId ?? null });
 
     if (state.isPlaying && lastTime !== null) {
       const deltaMs = Math.min(timestamp - lastTime, 50);

@@ -220,6 +220,7 @@ Component
       displayName,
       color: color ? color[2] : undefined,
       stereotype: stereotype ? stereotype[1] : undefined,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
   / "[" displayName:BracketName "]" WS+ "as" WS+ id:Alias color:(_ "#" ColorValue)? stereotype:(_ Stereotype)?
@@ -230,6 +231,7 @@ Component
       displayName,
       color: color ? color[2] : undefined,
       stereotype: stereotype ? stereotype[1] : undefined,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
 
@@ -255,6 +257,7 @@ Connection
       label,
       lineStyle,
       arrowStyle,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
 
@@ -309,6 +312,7 @@ FlowBlock
       else if (prop.key === 'color') result.color = prop.value;
       else if (prop.key === 'after') result.after = prop.value;
     }
+    result.loc = { start: location().start.offset, end: location().end.offset };
     return result;
   }
 

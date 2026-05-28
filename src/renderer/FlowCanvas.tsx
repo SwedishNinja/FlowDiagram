@@ -1,10 +1,11 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
 import { groupToggleRect, zoomCompensation } from './drawGraph';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
+import { deleteComponent, renameComponent } from '../parser/textMutations';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -91,6 +92,17 @@ const CORNER_TO_CURSOR: Record<Corner, string> = {
   sw: 'nesw-resize',
 };
 
+interface RenameOverlay {
+  nodeId: string;
+  /** Initial value of the input (the existing component ID). */
+  initial: string;
+  /** Screen-space position + size of the input (relative to the canvas container). */
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export default function FlowCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const controllerRef = useRef<AnimationController | null>(null);
@@ -100,6 +112,7 @@ export default function FlowCanvas() {
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   const layout = useFlowStore((s) => s.layout);
+  const [renameOverlay, setRenameOverlay] = useState<RenameOverlay | null>(null);
 
   // Initialize animation loop once
   useEffect(() => {
@@ -117,6 +130,7 @@ export default function FlowCanvas() {
       exportFrame: useFlowStore.getState().showExportFrame ? useFlowStore.getState().exportFrame : null,
       collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
       manualCollapsed: useFlowStore.getState().manualCollapsed,
+      selectedId: useFlowStore.getState().selectedId,
     }));
 
     controllerRef.current = controller;
@@ -382,6 +396,7 @@ export default function FlowCanvas() {
     const node = findNodeAt(coords.x, coords.y, tForNode?.transform.scale);
 
     if (node) {
+      useFlowStore.getState().setSelection(node.id, 'component');
       dragRef.current = {
         kind: 'node',
         nodeId: node.id,
@@ -409,7 +424,8 @@ export default function FlowCanvas() {
       }
     }
 
-    // 5. Pan
+    // 5. Pan — clicking empty canvas also clears selection.
+    useFlowStore.getState().clearSelection();
     dragRef.current = {
       kind: 'pan',
       startClientX: e.clientX,
@@ -621,7 +637,24 @@ export default function FlowCanvas() {
     if (updated !== sourceText) setSourceText(updated);
   }, []);
 
-  // Double-click on empty canvas resets pan + zoom
+  /** Open the rename overlay positioned over the given node. */
+  const beginRename = useCallback((node: LayoutNode) => {
+    const canvas = canvasRef.current;
+    const currentLayout = useFlowStore.getState().layout;
+    if (!canvas || !currentLayout) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = computeTransform(rect.width, rect.height, currentLayout, panRef.current.x, panRef.current.y, zoomRef.current);
+    setRenameOverlay({
+      nodeId: node.id,
+      initial: node.id,
+      left: node.x * t.scale + t.offsetX,
+      top: node.y * t.scale + t.offsetY,
+      width: node.width * t.scale,
+      height: node.height * t.scale,
+    });
+  }, []);
+
+  // Double-click: rename if over a node, otherwise reset pan + zoom.
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -631,26 +664,146 @@ export default function FlowCanvas() {
     if (!currentLayout) return;
     const t = computeTransform(rect.width, rect.height, currentLayout, panRef.current.x, panRef.current.y, zoomRef.current);
     const diag = canvasToDiagram(cx, cy, t);
-    if (findNodeAt(diag.x, diag.y, t.scale)) return;
+    const node = findNodeAt(diag.x, diag.y, t.scale);
+    if (node) {
+      beginRename(node);
+      return;
+    }
     panRef.current = { x: 0, y: 0 };
     zoomRef.current = 1;
-  }, [findNodeAt]);
+  }, [findNodeAt, beginRename]);
+
+  /** Commit a rename: validate, build new source via renameComponent, push to store. */
+  const commitRename = useCallback((nodeId: string, rawNewId: string) => {
+    const newId = rawNewId.trim();
+    const valid = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId);
+    if (!valid || newId === nodeId) {
+      setRenameOverlay(null);
+      return;
+    }
+    const ast = useFlowStore.getState().ast;
+    if (!ast) {
+      setRenameOverlay(null);
+      return;
+    }
+    // Reject collisions with existing component/group/connection/flow IDs.
+    const taken = new Set<string>([
+      ...ast.components.map((c) => c.id),
+      ...ast.groups.map((g) => g.id),
+      ...ast.connections.map((c) => c.id),
+      ...ast.flows.map((f) => f.name),
+    ]);
+    taken.delete(nodeId);
+    if (taken.has(newId)) {
+      setRenameOverlay(null);
+      return;
+    }
+    const sourceText = useFlowStore.getState().sourceText;
+    const updated = renameComponent(sourceText, ast, nodeId, newId);
+    if (updated !== sourceText) {
+      useFlowStore.getState().setSourceText(updated);
+      useFlowStore.getState().setSelection(newId, 'component');
+    }
+    setRenameOverlay(null);
+  }, []);
+
+  // Global Delete / Backspace / Escape handling. Skips when focus is inside a
+  // text editor so the CodeMirror buffer still receives the key.
+  useEffect(() => {
+    function isEditableTarget(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false;
+      if (t.isContentEditable) return true;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || !!t.closest('.cm-editor');
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        useFlowStore.getState().clearSelection();
+        setRenameOverlay(null);
+        return;
+      }
+      if (isEditableTarget(e.target)) return;
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const { selectedId, selectionKind, ast, sourceText, setSourceText, clearSelection } =
+        useFlowStore.getState();
+      if (!selectedId || selectionKind !== 'component' || !ast) return;
+      e.preventDefault();
+      const updated = deleteComponent(sourceText, ast, selectedId);
+      if (updated !== sourceText) setSourceText(updated);
+      clearSelection();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={handlePointerUp}
-      onPointerCancel={handlePointerUp}
-      onDoubleClick={handleDoubleClick}
-      onWheel={handleWheel}
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <canvas
+        ref={canvasRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
+        onWheel={handleWheel}
+        style={{
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          touchAction: 'none',
+          cursor: 'grab',
+        }}
+      />
+      {renameOverlay && (
+        <RenameInput
+          key={renameOverlay.nodeId}
+          overlay={renameOverlay}
+          onCommit={(v) => commitRename(renameOverlay.nodeId, v)}
+          onCancel={() => setRenameOverlay(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function RenameInput({
+  overlay,
+  onCommit,
+  onCancel,
+}: {
+  overlay: RenameOverlay;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <input
+      ref={inputRef}
+      defaultValue={overlay.initial}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit(e.currentTarget.value);
+        else if (e.key === 'Escape') onCancel();
+        e.stopPropagation();
+      }}
+      onBlur={(e) => onCommit(e.currentTarget.value)}
       style={{
-        width: '100%',
-        height: '100%',
-        display: 'block',
-        touchAction: 'none',
-        cursor: 'grab',
+        position: 'absolute',
+        left: overlay.left,
+        top: overlay.top,
+        width: overlay.width,
+        height: overlay.height,
+        font: '13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        textAlign: 'center',
+        border: '2px solid #3b82f6',
+        borderRadius: 8,
+        background: '#ffffff',
+        outline: 'none',
+        padding: 0,
+        boxSizing: 'border-box',
       }}
     />
   );

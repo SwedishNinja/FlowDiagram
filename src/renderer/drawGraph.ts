@@ -36,6 +36,8 @@ export interface DrawOptions {
    * is applied — everything scales up proportionally.
    */
   scale?: number;
+  /** ID of the currently-selected node. Drawn with a highlight ring. */
+  selectedId?: string | null;
 }
 
 /** Return the factor that, when multiplied with a base diagram-coord size,
@@ -241,7 +243,7 @@ function contrastingInk(color: string): string {
   return lum > 155 ? '#0f172a' : '#f8fafc';
 }
 
-function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode) {
+function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode, selected: boolean = false) {
   const fill = resolveColor(node.color);
 
   ctx.shadowColor = 'rgba(0,0,0,0.08)';
@@ -253,8 +255,8 @@ function drawNode(ctx: CanvasRenderingContext2D, node: LayoutNode) {
   ctx.fillStyle = fill;
   ctx.fill();
   ctx.shadowColor = 'transparent';
-  ctx.strokeStyle = COLORS.nodeStroke;
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = selected ? '#3b82f6' : COLORS.nodeStroke;
+  ctx.lineWidth = selected ? 2.5 : 1.5;
   ctx.stroke();
 
   ctx.fillStyle = COLORS.nodeText;
@@ -606,9 +608,10 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
   }
 
   // 3. Nodes — hide when inside a collapsed ancestor.
+  const selectedId = options.selectedId ?? null;
   for (const node of layout.nodes) {
     if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
-    drawNode(ctx, node);
+    drawNode(ctx, node, node.id === selectedId);
   }
 }
 

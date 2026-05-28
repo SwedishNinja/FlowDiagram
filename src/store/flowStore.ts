@@ -51,6 +51,13 @@ export interface FlowStore {
    *  and stages. Any consumer can subscribe and react. */
   particleResetSignal: number;
   triggerParticleReset: () => void;
+
+  /** Currently selected entity. Phase 1 only supports component selection;
+   *  the kind field is here for forward-compatibility with connections/flows. */
+  selectedId: string | null;
+  selectionKind: 'component' | null;
+  setSelection: (id: string, kind: 'component') => void;
+  clearSelection: () => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -150,5 +157,10 @@ export const useFlowStore = create<FlowStore>()(
 
     particleResetSignal: 0,
     triggerParticleReset: () => set((s) => ({ particleResetSignal: s.particleResetSignal + 1 })),
+
+    selectedId: null,
+    selectionKind: null,
+    setSelection: (id, kind) => set({ selectedId: id, selectionKind: kind }),
+    clearSelection: () => set({ selectedId: null, selectionKind: null }),
   })),
 );

@@ -12,7 +12,7 @@ component "API Gateway" as gw
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.document.components).toHaveLength(1);
-      expect(result.document.components[0]).toEqual({
+      expect(result.document.components[0]).toMatchObject({
         id: 'gw',
         displayName: 'API Gateway',
         color: undefined,
