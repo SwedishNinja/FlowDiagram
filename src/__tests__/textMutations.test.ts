@@ -9,6 +9,8 @@ import {
   generateUniqueComponentId,
   renameComponent,
   updateComponent,
+  updateConnection,
+  updateFlow,
 } from '../parser/textMutations';
 
 function parseOk(src: string) {
@@ -294,6 +296,145 @@ a -> b as ab : link
     expect(out).toContain('component "Apex" as a #d4ff3a <<core>>');
     expect(out).toContain('component "B" as b');
     expect(out).toContain('a -> b as ab : link');
+    parseOk(out);
+  });
+});
+
+describe('updateConnection', () => {
+  it('replaces the label and preserves the named id', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab : old label
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateConnection(src, doc, 'ab', { label: 'new label' });
+    expect(out).toContain('a -> b as ab : new label');
+    parseOk(out);
+  });
+
+  it('clears the label when null', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab : something
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateConnection(src, doc, 'ab', { label: null });
+    expect(out).toContain('a -> b as ab');
+    expect(out).not.toContain(': something');
+    parseOk(out);
+  });
+
+  it('changes the arrow token based on style + arrow', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+@enduml
+`;
+    const doc = parseOk(src);
+    const dotted = updateConnection(src, doc, 'ab', { lineStyle: 'dotted' });
+    expect(dotted).toContain('a ..> b as ab');
+    parseOk(dotted);
+    const bi = updateConnection(src, doc, 'ab', { arrowStyle: 'bidirectional' });
+    expect(bi).toContain('a <-> b as ab');
+    parseOk(bi);
+    const long = updateConnection(src, doc, 'ab', { arrowStyle: 'long' });
+    expect(long).toContain('a --> b as ab');
+    parseOk(long);
+  });
+
+  it('does not inject `as _conn_N` for auto-id connections', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b
+@enduml
+`;
+    const doc = parseOk(src);
+    const autoId = doc.connections[0]!.id;
+    const out = updateConnection(src, doc, autoId, { label: 'hi' });
+    expect(out).toContain('a -> b : hi');
+    expect(out).not.toContain(autoId);
+    parseOk(out);
+  });
+});
+
+describe('updateFlow', () => {
+  const FLOW_SRC = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  data: "old data"
+  every: 1s
+  traverse_time: 2s
+@enduml
+`;
+
+  it('changes data and color', () => {
+    const doc = parseOk(FLOW_SRC);
+    const out = updateFlow(FLOW_SRC, doc, 'login', { data: 'new data', color: 'aabbcc' });
+    expect(out).toContain('data: "new data"');
+    expect(out).toContain('color: #aabbcc');
+    parseOk(out);
+  });
+
+  it('toggles direction to reverse', () => {
+    const doc = parseOk(FLOW_SRC);
+    const out = updateFlow(FLOW_SRC, doc, 'login', { direction: 'reverse' });
+    expect(out).toContain('direction: reverse');
+    parseOk(out);
+  });
+
+  it('updates traverse time without disturbing other lines', () => {
+    const doc = parseOk(FLOW_SRC);
+    const out = updateFlow(FLOW_SRC, doc, 'login', { traverseTimeMs: 5000 });
+    expect(out).toContain('traverse_time: 5000ms');
+    expect(out).toContain('component "A" as a');
+    expect(out).toContain('a -> b as ab');
+    parseOk(out);
+  });
+
+  it('preserves leading indent for flows inside a @stage block', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow login on ab
+    data: "x"
+    every: 1s
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateFlow(src, doc, 'login', { data: 'y' });
+    expect(out).toContain('  @flow login on ab');
+    expect(out).toContain('    data: "y"');
+    expect(out).toContain('@end_stage');
+    parseOk(out);
+  });
+
+  it('clears color when null', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  every: 1s
+  color: #ff0000
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateFlow(src, doc, 'login', { color: null });
+    expect(out).not.toContain('color:');
     parseOk(out);
   });
 });

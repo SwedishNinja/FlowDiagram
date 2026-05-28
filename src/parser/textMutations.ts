@@ -279,6 +279,103 @@ export function updateComponent(
 }
 
 /**
+ * Replace a connection's declaration with a canonical line carrying the
+ * supplied field updates. Arrow token derives from the lineStyle +
+ * arrowStyle combination per the grammar:
+ *   solid forward → `->`, solid long → `-->`,
+ *   solid bidirectional → `<->`, dotted forward → `..>`.
+ * Non-representable combinations fall back to solid forward.
+ */
+export function updateConnection(
+  text: string,
+  doc: FlowDocument,
+  id: string,
+  updates: {
+    label?: string | null;
+    lineStyle?: 'solid' | 'dotted';
+    arrowStyle?: 'forward' | 'long' | 'bidirectional';
+  },
+): string {
+  const conn = doc.connections.find((c) => c.id === id);
+  if (!conn?.loc) return text;
+
+  const label = 'label' in updates ? updates.label : conn.label;
+  const lineStyle = updates.lineStyle ?? conn.lineStyle;
+  const arrowStyle = updates.arrowStyle ?? conn.arrowStyle;
+
+  let arrow: string;
+  if (lineStyle === 'dotted') arrow = '..>';
+  else if (arrowStyle === 'bidirectional') arrow = '<->';
+  else if (arrowStyle === 'long') arrow = '-->';
+  else arrow = '->';
+
+  // Preserve the `as <id>` clause only when the user named the connection.
+  // The parser assigns `_conn_N` to unnamed connections — those aren't in
+  // source and shouldn't be reintroduced.
+  const idPart = conn.id && !conn.id.startsWith('_conn_') ? ` as ${conn.id}` : '';
+  let line = `${conn.source} ${arrow} ${conn.target}${idPart}`;
+  if (label) line += ` : ${label}`;
+
+  return text.slice(0, conn.loc.start) + line + text.slice(conn.loc.end);
+}
+
+/**
+ * Re-serialize a flow block from canonical fields. Preserves the flow's
+ * leading indentation so flows inside an @stage block keep their indent
+ * relationship. The stage wrapper itself is unaffected (the flow's loc
+ * captures only the @flow block).
+ */
+export function updateFlow(
+  text: string,
+  doc: FlowDocument,
+  name: string,
+  updates: {
+    data?: string | null;
+    color?: string | null;
+    direction?: 'forward' | 'reverse';
+    traverseTimeMs?: number;
+    intervalMs?: number;
+    hasRate?: boolean;
+    startDelayMs?: number;
+    after?: string[];
+  },
+): string {
+  const flow = doc.flows.find((f) => f.name === name);
+  if (!flow?.loc) return text;
+
+  const data = 'data' in updates ? updates.data : flow.data;
+  const color = 'color' in updates ? updates.color : flow.color;
+  const direction = updates.direction ?? flow.direction;
+  const traverseTimeMs = updates.traverseTimeMs ?? flow.traverseTimeMs;
+  const intervalMs = updates.intervalMs ?? flow.intervalMs;
+  const hasRate = updates.hasRate ?? !!flow.hasRate;
+  const startDelayMs = updates.startDelayMs ?? flow.startDelayMs;
+  const after = updates.after ?? flow.after;
+
+  // Capture indentation: text[loc.start..] begins with optional whitespace
+  // that the grammar's leading `_` consumed. Re-prepend it on every line so
+  // staged flows keep their nesting.
+  let indentEnd = flow.loc.start;
+  while (indentEnd < text.length && (text[indentEnd] === ' ' || text[indentEnd] === '\t')) {
+    indentEnd++;
+  }
+  const indent = text.slice(flow.loc.start, indentEnd);
+
+  const body: string[] = [`@flow ${name} on ${flow.connection}`];
+  if (data) body.push(`  data: "${data}"`);
+  if (hasRate) body.push(`  every: ${Math.round(intervalMs)}ms`);
+  body.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
+  if (startDelayMs > 0) body.push(`  start_delay: ${Math.round(startDelayMs)}ms`);
+  if (direction === 'reverse') body.push(`  direction: reverse`);
+  if (color) body.push(`  color: #${color.replace(/^#/, '')}`);
+  if (after.length > 0) body.push(`  after: ${after.join(', ')}`);
+
+  const block = body.map((l) => indent + l).join('\n') + '\n';
+
+  return text.slice(0, flow.loc.start) + block + text.slice(flow.loc.end);
+}
+
+/**
  * Rename a component everywhere: its declaration alias + any connection
  * source/target reference. Flows reference connection IDs, not component
  * IDs, so they aren't touched here.

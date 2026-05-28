@@ -52,11 +52,12 @@ export interface FlowStore {
   particleResetSignal: number;
   triggerParticleReset: () => void;
 
-  /** Currently selected entity. Phase 1 only supports component selection;
-   *  the kind field is here for forward-compatibility with connections/flows. */
+  /** Currently selected entity. Components are selected by clicking the
+   *  rectangle, connections by clicking the polyline, flows by clicking a
+   *  chip in the connection inspector. */
   selectedId: string | null;
-  selectionKind: 'component' | null;
-  setSelection: (id: string, kind: 'component') => void;
+  selectionKind: 'component' | 'connection' | 'flow' | null;
+  setSelection: (id: string, kind: 'component' | 'connection' | 'flow') => void;
   clearSelection: () => void;
 
   /** Active canvas tool. 'select' is the default — clicks select/drag nodes.

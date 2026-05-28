@@ -9,6 +9,8 @@ import {
   appendConnection,
   createComponent,
   deleteComponent,
+  deleteConnection,
+  deleteFlow,
   generateUniqueComponentId,
   renameComponent,
 } from '../parser/textMutations';
@@ -103,6 +105,24 @@ function hitTestFrame(
   return null;
 }
 
+/** Shortest distance from (px, py) to the segment (ax, ay)–(bx, by). Used
+ *  for the edge polyline hit-test. */
+function distancePointToSegment(
+  px: number, py: number,
+  ax: number, ay: number,
+  bx: number, by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - ax, py - ay);
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
 const CORNER_TO_CURSOR: Record<Corner, string> = {
   nw: 'nwse-resize',
   se: 'nwse-resize',
@@ -160,6 +180,7 @@ export default function FlowCanvas() {
       collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
       manualCollapsed: useFlowStore.getState().manualCollapsed,
       selectedId: useFlowStore.getState().selectedId,
+      selectionKind: useFlowStore.getState().selectionKind,
       hoveredId: hoveredIdRef.current,
       connectionDraft: connectionDraftRef.current,
     }));
@@ -231,6 +252,30 @@ export default function FlowCanvas() {
       }
     }
     return null;
+  }, []);
+
+  /**
+   * Hit-test the edge polylines. Returns the connection id of the closest
+   * edge whose distance to (x, y) is within `screenPx` CSS pixels — converted
+   * to diagram coords via the current scale. Skips suppressed edges.
+   */
+  const findConnectionAt = useCallback((x: number, y: number, effectiveScale: number): string | null => {
+    const current = useFlowStore.getState().layout;
+    if (!current) return null;
+    const tolerance = 6 / effectiveScale;
+    let closestId: string | null = null;
+    let closestDist = tolerance;
+    for (const edge of current.edges) {
+      const pts = edge.points;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        const d = distancePointToSegment(x, y, pts[i]!.x, pts[i]!.y, pts[i + 1]!.x, pts[i + 1]!.y);
+        if (d < closestDist) {
+          closestDist = d;
+          closestId = edge.id;
+        }
+      }
+    }
+    return closestId;
   }, []);
 
   /**
@@ -548,7 +593,19 @@ export default function FlowCanvas() {
       }
     }
 
-    // 5. Pan — clicking empty canvas also clears selection.
+    // 6. Connection polyline hit — select the closest edge if any is within
+    //    ~6 CSS px of the click. No drag state is set; the user releases
+    //    and can pan/drag separately.
+    if (tForNode) {
+      const connId = findConnectionAt(coords.x, coords.y, tForNode.transform.scale);
+      if (connId) {
+        useFlowStore.getState().setSelection(connId, 'connection');
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 7. Pan — clicking empty canvas also clears selection.
     useFlowStore.getState().clearSelection();
     dragRef.current = {
       kind: 'pan',
@@ -559,7 +616,7 @@ export default function FlowCanvas() {
     };
     if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [findNodeAt, findGroupHandleAt, findToggleAt, findHandleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
+  }, [findNodeAt, findGroupHandleAt, findToggleAt, findHandleAt, findConnectionAt, getDiagramCoords, getFrameInCanvas, getTransform]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -927,9 +984,12 @@ export default function FlowCanvas() {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const { selectedId, selectionKind, ast, sourceText, setSourceText, clearSelection } =
         useFlowStore.getState();
-      if (!selectedId || selectionKind !== 'component' || !ast) return;
+      if (!selectedId || !selectionKind || !ast) return;
       e.preventDefault();
-      const updated = deleteComponent(sourceText, ast, selectedId);
+      let updated = sourceText;
+      if (selectionKind === 'component') updated = deleteComponent(sourceText, ast, selectedId);
+      else if (selectionKind === 'connection') updated = deleteConnection(sourceText, ast, selectedId);
+      else if (selectionKind === 'flow') updated = deleteFlow(sourceText, ast, selectedId);
       if (updated !== sourceText) setSourceText(updated);
       clearSelection();
     }

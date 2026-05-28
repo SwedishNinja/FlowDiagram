@@ -122,8 +122,10 @@ export function createAnimationLoop(
     collapseThresholdPx?: number;
     /** User-pinned collapsed packages (force collapsed regardless of zoom). */
     manualCollapsed?: Record<string, true>;
-    /** Currently selected node ID — drawn with a highlight ring. */
+    /** Currently selected entity ID — paired with selectionKind to decide
+     *  whether to highlight a node or an edge. */
     selectedId?: string | null;
+    selectionKind?: 'component' | 'connection' | 'flow' | null;
     /** Node the pointer is currently hovering over (when no drag in progress).
      *  Drives the connection-create handle overlay. */
     hoveredId?: string | null;
@@ -181,6 +183,7 @@ export function createAnimationLoop(
       effectiveEdges,
       scale,
       selectedId: state.selectedId ?? null,
+      selectionKind: state.selectionKind ?? null,
       hoveredId: state.hoveredId ?? null,
       connectionDraft: state.connectionDraft ?? null,
     });

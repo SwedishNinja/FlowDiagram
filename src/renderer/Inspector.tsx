@@ -1,40 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
-import { updateComponent } from '../parser/textMutations';
+import { updateComponent, updateConnection, updateFlow } from '../parser/textMutations';
+import type { ComponentNode, ConnectionNode, FlowNode } from '../types';
 
 /**
  * Floating right-side panel that surfaces editable fields for the currently
- * selected component. Phase 4 covers components only; connection/flow/group
- * inspectors will follow in later phases.
+ * selected entity. Components, connections, and flows each render their own
+ * field set; the panel hides when nothing is selected.
  */
 export default function Inspector() {
   const ast = useFlowStore((s) => s.ast);
   const selectedId = useFlowStore((s) => s.selectedId);
   const selectionKind = useFlowStore((s) => s.selectionKind);
 
-  if (!ast || !selectedId || selectionKind !== 'component') return null;
-  const comp = ast.components.find((c) => c.id === selectedId);
-  if (!comp) return null;
+  if (!ast || !selectedId || !selectionKind) return null;
 
-  const commit = (updates: {
-    displayName?: string;
-    color?: string | null;
-    stereotype?: string | null;
-  }) => {
-    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
-    if (!latestAst) return;
-    const next = updateComponent(sourceText, latestAst, selectedId, updates);
-    if (next !== sourceText) setSourceText(next);
-  };
+  let body: React.ReactNode = null;
+  if (selectionKind === 'component') {
+    const comp = ast.components.find((c) => c.id === selectedId);
+    if (comp) body = <ComponentInspector comp={comp} />;
+  } else if (selectionKind === 'connection') {
+    const conn = ast.connections.find((c) => c.id === selectedId);
+    if (conn) body = <ConnectionInspector conn={conn} />;
+  } else if (selectionKind === 'flow') {
+    const flow = ast.flows.find((f) => f.name === selectedId);
+    if (flow) body = <FlowInspector flow={flow} />;
+  }
+  if (!body) return null;
 
   return (
     <div
-      key={selectedId}
+      key={`${selectionKind}-${selectedId}`}
       style={{
         position: 'absolute',
         top: 12,
         right: 12,
-        width: 240,
+        width: 260,
         background: '#ffffff',
         borderRadius: 8,
         boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
@@ -44,6 +45,20 @@ export default function Inspector() {
         color: '#1e293b',
       }}
     >
+      {body}
+    </div>
+  );
+}
+
+function ComponentInspector({ comp }: { comp: ComponentNode }) {
+  const commit = (updates: Parameters<typeof updateComponent>[3]) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = updateComponent(sourceText, ast, comp.id, updates);
+    if (next !== sourceText) setSourceText(next);
+  };
+  return (
+    <>
       <Header label="Component" id={comp.id} />
       <FieldRow label="Display name">
         <CommitTextInput
@@ -62,8 +77,156 @@ export default function Inspector() {
           onCommit={(v) => commit({ stereotype: v.trim() === '' ? null : v.trim() })}
         />
       </FieldRow>
-    </div>
+    </>
   );
+}
+
+function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
+  const flows = useFlowStore((s) => s.ast?.flows ?? []);
+  const setSelection = useFlowStore((s) => s.setSelection);
+
+  const commit = (updates: Parameters<typeof updateConnection>[3]) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = updateConnection(sourceText, ast, conn.id, updates);
+    if (next !== sourceText) setSourceText(next);
+  };
+
+  const arrowKey = arrowKeyFor(conn.lineStyle, conn.arrowStyle);
+  const flowsOnThis = flows.filter((f) => f.connection === conn.id);
+
+  return (
+    <>
+      <Header label="Connection" id={`${conn.source} → ${conn.target}`} />
+      <FieldRow label="Label">
+        <CommitTextInput
+          initial={conn.label ?? ''}
+          placeholder="(none)"
+          onCommit={(v) => commit({ label: v.trim() === '' ? null : v })}
+        />
+      </FieldRow>
+      <FieldRow label="Arrow">
+        <SegmentedControl
+          options={[
+            { value: 'forward', label: '→', title: 'Solid forward (->)' },
+            { value: 'long', label: '⟶', title: 'Solid long (-->)' },
+            { value: 'dotted', label: '⇢', title: 'Dotted forward (..>)' },
+            { value: 'bidirectional', label: '↔', title: 'Bidirectional (<->)' },
+          ]}
+          value={arrowKey}
+          onChange={(next) => commit(arrowUpdatesFor(next))}
+        />
+      </FieldRow>
+      {flowsOnThis.length > 0 && (
+        <FieldRow label="Flows">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {flowsOnThis.map((f) => (
+              <button
+                key={f.name}
+                type="button"
+                onClick={() => setSelection(f.name, 'flow')}
+                style={chipStyle}
+              >
+                {f.name}
+              </button>
+            ))}
+          </div>
+        </FieldRow>
+      )}
+    </>
+  );
+}
+
+function FlowInspector({ flow }: { flow: FlowNode }) {
+  const setSelection = useFlowStore((s) => s.setSelection);
+
+  const commit = (updates: Parameters<typeof updateFlow>[3]) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = updateFlow(sourceText, ast, flow.name, updates);
+    if (next !== sourceText) setSourceText(next);
+  };
+
+  return (
+    <>
+      <Header label="Flow" id={flow.name} />
+      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
+        on{' '}
+        <button
+          type="button"
+          onClick={() => setSelection(flow.connection, 'connection')}
+          style={inlineLinkStyle}
+        >
+          {flow.connection}
+        </button>
+      </div>
+      <FieldRow label="Data label">
+        <CommitTextInput
+          initial={flow.data ?? ''}
+          placeholder="(none)"
+          onCommit={(v) => commit({ data: v.trim() === '' ? null : v })}
+        />
+      </FieldRow>
+      <FieldRow label="Color">
+        <ColorField value={flow.color} onCommit={(v) => commit({ color: v })} />
+      </FieldRow>
+      <FieldRow label="Direction">
+        <SegmentedControl
+          options={[
+            { value: 'forward', label: 'Forward' },
+            { value: 'reverse', label: 'Reverse' },
+          ]}
+          value={flow.direction}
+          onChange={(v) => commit({ direction: v as 'forward' | 'reverse' })}
+        />
+      </FieldRow>
+      <FieldRow label="Traverse time (ms)">
+        <CommitNumberInput
+          initial={Math.round(flow.traverseTimeMs)}
+          min={50}
+          onCommit={(v) => commit({ traverseTimeMs: v })}
+        />
+      </FieldRow>
+      <FieldRow label="Continuous">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={!!flow.hasRate}
+            onChange={(e) => commit({ hasRate: e.target.checked })}
+          />
+          <span style={{ color: '#475569' }}>Re-spawn on interval</span>
+        </label>
+      </FieldRow>
+      {flow.hasRate && (
+        <FieldRow label="Every (ms)">
+          <CommitNumberInput
+            initial={Math.round(flow.intervalMs)}
+            min={30}
+            onCommit={(v) => commit({ intervalMs: v })}
+          />
+        </FieldRow>
+      )}
+    </>
+  );
+}
+
+function arrowKeyFor(
+  lineStyle: 'solid' | 'dotted',
+  arrowStyle: 'forward' | 'long' | 'bidirectional',
+): 'forward' | 'long' | 'dotted' | 'bidirectional' {
+  if (lineStyle === 'dotted') return 'dotted';
+  if (arrowStyle === 'bidirectional') return 'bidirectional';
+  if (arrowStyle === 'long') return 'long';
+  return 'forward';
+}
+
+function arrowUpdatesFor(key: string): { lineStyle: 'solid' | 'dotted'; arrowStyle: 'forward' | 'long' | 'bidirectional' } {
+  switch (key) {
+    case 'dotted': return { lineStyle: 'dotted', arrowStyle: 'forward' };
+    case 'bidirectional': return { lineStyle: 'solid', arrowStyle: 'bidirectional' };
+    case 'long': return { lineStyle: 'solid', arrowStyle: 'long' };
+    default: return { lineStyle: 'solid', arrowStyle: 'forward' };
+  }
 }
 
 function Header({ label, id }: { label: string; id: string }) {
@@ -74,6 +237,7 @@ function Header({ label, id }: { label: string; id: string }) {
         alignItems: 'baseline',
         justifyContent: 'space-between',
         marginBottom: 10,
+        gap: 8,
       }}
     >
       <span
@@ -86,7 +250,16 @@ function Header({ label, id }: { label: string; id: string }) {
       >
         {label}
       </span>
-      <code style={{ font: '11px ui-monospace, SF Mono, Menlo, monospace', color: '#475569' }}>
+      <code
+        style={{
+          font: '11px ui-monospace, SF Mono, Menlo, monospace',
+          color: '#475569',
+          textAlign: 'right',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
         {id}
       </code>
     </div>
@@ -102,8 +275,6 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-/** Text input with local state; reflects the prop when not focused, commits
- *  on blur/Enter, reverts on Escape. */
 function CommitTextInput({
   initial,
   placeholder,
@@ -130,24 +301,95 @@ function CommitTextInput({
         if (value !== initial) onCommit(value);
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.currentTarget.blur();
-        } else if (e.key === 'Escape') {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
           setValue(initial);
           e.currentTarget.blur();
         }
-        // Native input target handles its own keys; the global canvas
-        // shortcut listener already skips edits when focus is on INPUT.
       }}
-      style={{
-        font: 'inherit',
-        padding: '6px 8px',
-        border: '1px solid #cbd5e1',
-        borderRadius: 4,
-        outline: 'none',
-        background: '#f8fafc',
-      }}
+      style={textInputStyle}
     />
+  );
+}
+
+function CommitNumberInput({
+  initial,
+  min,
+  onCommit,
+}: {
+  initial: number;
+  min?: number;
+  onCommit: (value: number) => void;
+}) {
+  const [value, setValue] = useState(String(initial));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setValue(String(initial));
+  }, [initial, focused]);
+  return (
+    <input
+      type="number"
+      value={value}
+      min={min}
+      onChange={(e) => setValue(e.target.value)}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        const n = Number(value);
+        if (!Number.isFinite(n)) {
+          setValue(String(initial));
+          return;
+        }
+        const clamped = min !== undefined ? Math.max(min, n) : n;
+        if (clamped !== initial) onCommit(clamped);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
+          setValue(String(initial));
+          e.currentTarget.blur();
+        }
+      }}
+      style={textInputStyle}
+    />
+  );
+}
+
+function SegmentedControl({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string; title?: string }[];
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  return (
+    <div style={{ display: 'flex', border: '1px solid #cbd5e1', borderRadius: 4, overflow: 'hidden' }}>
+      {options.map((opt, i) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            title={opt.title}
+            onClick={() => onChange(opt.value)}
+            style={{
+              flex: 1,
+              font: '12px inherit',
+              padding: '6px 4px',
+              border: 'none',
+              borderLeft: i === 0 ? 'none' : '1px solid #cbd5e1',
+              background: active ? '#3b82f6' : '#f8fafc',
+              color: active ? '#ffffff' : '#475569',
+              cursor: 'pointer',
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -179,22 +421,49 @@ function ColorField({
         {value ? '#' + value.replace(/^#/, '') : '(none)'}
       </code>
       {value && (
-        <button
-          type="button"
-          onClick={() => onCommit(null)}
-          style={{
-            font: '11px inherit',
-            background: 'transparent',
-            border: '1px solid #cbd5e1',
-            borderRadius: 4,
-            padding: '3px 6px',
-            cursor: 'pointer',
-            color: '#475569',
-          }}
-        >
+        <button type="button" onClick={() => onCommit(null)} style={clearButtonStyle}>
           Clear
         </button>
       )}
     </div>
   );
 }
+
+const textInputStyle: React.CSSProperties = {
+  font: 'inherit',
+  padding: '6px 8px',
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  outline: 'none',
+  background: '#f8fafc',
+};
+
+const chipStyle: React.CSSProperties = {
+  font: '11px inherit',
+  padding: '3px 8px',
+  border: '1px solid #cbd5e1',
+  borderRadius: 12,
+  background: '#f8fafc',
+  color: '#475569',
+  cursor: 'pointer',
+};
+
+const inlineLinkStyle: React.CSSProperties = {
+  font: 'inherit',
+  background: 'transparent',
+  border: 'none',
+  padding: 0,
+  color: '#3b82f6',
+  cursor: 'pointer',
+  textDecoration: 'underline',
+};
+
+const clearButtonStyle: React.CSSProperties = {
+  font: '11px inherit',
+  background: 'transparent',
+  border: '1px solid #cbd5e1',
+  borderRadius: 4,
+  padding: '3px 6px',
+  cursor: 'pointer',
+  color: '#475569',
+};

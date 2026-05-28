@@ -36,8 +36,12 @@ export interface DrawOptions {
    * is applied — everything scales up proportionally.
    */
   scale?: number;
-  /** ID of the currently-selected node. Drawn with a highlight ring. */
+  /** ID of the currently-selected node or connection. The renderer
+   *  interprets this against `selectionKind` to highlight a node ring or an
+   *  edge stroke. */
   selectedId?: string | null;
+  /** Which family `selectedId` belongs to. */
+  selectionKind?: 'component' | 'connection' | 'flow' | null;
   /** ID of the node the pointer is currently hovering over (when not dragging).
    *  Used to surface the connection-create handles. */
   hoveredId?: string | null;
@@ -329,13 +333,16 @@ function drawEdge(
   background: string = COLORS.background,
   zc: number = 1,
   labelOpacity: number = 1,
+  selected: boolean = false,
 ) {
   if (points.length < 2) return;
 
-  const strokeWidth = EDGE_STROKE * zc;
+  const strokeWidth = (selected ? EDGE_STROKE * 2 : EDGE_STROKE) * zc;
   const arrowSize = ARROWHEAD_SIZE * zc;
 
-  ctx.strokeStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
+  ctx.strokeStyle = selected
+    ? '#3b82f6'
+    : edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
   ctx.lineWidth = strokeWidth;
 
   if (edge.lineStyle === 'dotted') {
@@ -354,7 +361,9 @@ function drawEdge(
 
   const last = points[points.length - 1]!;
   const prev = points[points.length - 2]!;
-  ctx.fillStyle = edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
+  ctx.fillStyle = selected
+    ? '#3b82f6'
+    : edge.lineStyle === 'dotted' ? COLORS.edgeDotted : COLORS.edgeStroke;
   drawArrowhead(ctx, last, prev, arrowSize);
 
   if (edge.arrowStyle === 'bidirectional') {
@@ -626,20 +635,23 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
   // 2. Edges — use effectiveEdges (rerouted + suppression info).
   const effectiveEdges = options.effectiveEdges;
   const labelOpacity = edgeLabelOpacity(options.scale);
+  const selectedConnectionId =
+    options.selectionKind === 'connection' ? options.selectedId : null;
   for (const edge of layout.edges) {
     const eff = effectiveEdges?.get(edge.id);
     if (eff?.suppressed) continue;
     const points = eff?.points ?? edge.points;
-    drawEdge(ctx, edge, points, background, zc, labelOpacity);
+    drawEdge(ctx, edge, points, background, zc, labelOpacity, edge.id === selectedConnectionId);
   }
 
   // 3. Nodes — hide when inside a collapsed ancestor.
-  const selectedId = options.selectedId ?? null;
+  const selectedComponentId =
+    options.selectionKind === 'component' ? options.selectedId ?? null : null;
   const hoveredId = options.hoveredId ?? null;
   const draft = options.connectionDraft ?? null;
   for (const node of layout.nodes) {
     if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
-    const isSelected = node.id === selectedId;
+    const isSelected = node.id === selectedComponentId;
     const isDropTarget = draft?.targetId === node.id;
     drawNode(ctx, node, isSelected || isDropTarget);
   }
