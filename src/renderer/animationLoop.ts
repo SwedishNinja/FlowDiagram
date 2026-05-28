@@ -137,6 +137,15 @@ export function createAnimationLoop(
       cursorY: number;
       targetId: string | null;
     } | null;
+    /** Active connection-rewire draft (dragging an endpoint to a new node). */
+    rewireDraft?: {
+      connId: string;
+      end: 'source' | 'target';
+      anchor: { x: number; y: number };
+      cursorX: number;
+      cursorY: number;
+      targetId: string | null;
+    } | null;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -186,6 +195,7 @@ export function createAnimationLoop(
       selectionKind: state.selectionKind ?? null,
       hoveredId: state.hoveredId ?? null,
       connectionDraft: state.connectionDraft ?? null,
+      rewireDraft: state.rewireDraft ?? null,
     });
 
     if (state.isPlaying && lastTime !== null) {

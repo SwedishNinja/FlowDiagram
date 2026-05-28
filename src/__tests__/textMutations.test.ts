@@ -347,6 +347,35 @@ a -> b as ab
     parseOk(long);
   });
 
+  it('rewires the source while preserving label and id', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as ab : ping
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateConnection(src, doc, 'ab', { source: 'c' });
+    expect(out).toContain('c -> b as ab : ping');
+    expect(out).not.toContain('a -> b');
+    parseOk(out);
+  });
+
+  it('rewires the target', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as ab
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateConnection(src, doc, 'ab', { target: 'c' });
+    expect(out).toContain('a -> c as ab');
+    parseOk(out);
+  });
+
   it('does not inject `as _conn_N` for auto-id connections', () => {
     const src = `@startuml
 component "A" as a

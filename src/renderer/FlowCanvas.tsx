@@ -1,7 +1,14 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
-import { groupToggleRect, zoomCompensation, getNodeHandles, nodeHandleRadius } from './drawGraph';
+import {
+  groupToggleRect,
+  zoomCompensation,
+  getNodeHandles,
+  nodeHandleRadius,
+  getConnectionEndpoints,
+  endpointHandleRadius,
+} from './drawGraph';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
@@ -13,6 +20,7 @@ import {
   deleteFlow,
   generateUniqueComponentId,
   renameComponent,
+  updateConnection,
 } from '../parser/textMutations';
 import Inspector from './Inspector';
 import type { LayoutNode, LayoutGroup } from '../types';
@@ -68,13 +76,22 @@ interface CreateConnectionDragState {
   sourceId: string;
 }
 
+interface RewireConnectionDragState {
+  kind: 'rewire-connection';
+  connId: string;
+  end: 'source' | 'target';
+  /** Fixed endpoint position (diagram coords) for the rewire preview. */
+  anchor: { x: number; y: number };
+}
+
 type DragState =
   | NodeDragState
   | GroupDragState
   | PanDragState
   | FrameMoveDragState
   | FrameResizeDragState
-  | CreateConnectionDragState;
+  | CreateConnectionDragState
+  | RewireConnectionDragState;
 
 const FRAME_BORDER_HIT_PX = 8;   // how close (canvas px) to frame border to count as border hit
 const FRAME_CORNER_HIT_PX = 14;  // corner hit radius
@@ -156,6 +173,14 @@ export default function FlowCanvas() {
     cursorY: number;
     targetId: string | null;
   } | null>(null);
+  const rewireDraftRef = useRef<{
+    connId: string;
+    end: 'source' | 'target';
+    anchor: { x: number; y: number };
+    cursorX: number;
+    cursorY: number;
+    targetId: string | null;
+  } | null>(null);
   /** When a component is created via click-to-place, its id is staged here so
    *  the rename overlay can open on the very next layout pass. */
   const pendingRenameRef = useRef<string | null>(null);
@@ -183,6 +208,7 @@ export default function FlowCanvas() {
       selectionKind: useFlowStore.getState().selectionKind,
       hoveredId: hoveredIdRef.current,
       connectionDraft: connectionDraftRef.current,
+      rewireDraft: rewireDraftRef.current,
     }));
 
     controllerRef.current = controller;
@@ -250,6 +276,33 @@ export default function FlowCanvas() {
       if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
         return n;
       }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Hit-test endpoint handles of the currently-selected connection. Returns
+   * which end (source/target) was hit + the fixed endpoint's coords (the
+   * end that DIDN'T get grabbed — used as the rewire anchor).
+   */
+  const findEndpointHandleAt = useCallback((
+    x: number,
+    y: number,
+    effectiveScale: number,
+  ): { end: 'source' | 'target'; anchor: { x: number; y: number }; connId: string } | null => {
+    const { selectedId, selectionKind, layout: current } = useFlowStore.getState();
+    if (!current || selectionKind !== 'connection' || !selectedId) return null;
+    const edge = current.edges.find((e) => e.id === selectedId);
+    if (!edge) return null;
+    const ends = getConnectionEndpoints(edge.points);
+    if (!ends) return null;
+    const zc = zoomCompensation(effectiveScale);
+    const r = endpointHandleRadius(zc) * 1.6; // a bit looser than the visible dot
+    if (Math.hypot(x - ends.source.x, y - ends.source.y) <= r) {
+      return { end: 'source', anchor: ends.target, connId: edge.id };
+    }
+    if (Math.hypot(x - ends.target.x, y - ends.target.y) <= r) {
+      return { end: 'target', anchor: ends.source, connId: edge.id };
     }
     return null;
   }, []);
@@ -551,6 +604,32 @@ export default function FlowCanvas() {
       }
     }
 
+    // 2b. Rewire endpoint of the currently selected connection. Tested
+    //     before toggle/node so the endpoint dots win over the underlying
+    //     node body.
+    if (tForNode) {
+      const ep = findEndpointHandleAt(coords.x, coords.y, tForNode.transform.scale);
+      if (ep) {
+        rewireDraftRef.current = {
+          connId: ep.connId,
+          end: ep.end,
+          anchor: ep.anchor,
+          cursorX: coords.x,
+          cursorY: coords.y,
+          targetId: null,
+        };
+        dragRef.current = {
+          kind: 'rewire-connection',
+          connId: ep.connId,
+          end: ep.end,
+          anchor: ep.anchor,
+        };
+        if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
+        e.preventDefault();
+        return;
+      }
+    }
+
     // 3. Collapse/expand toggle hit — fires immediately, no drag.
     if (tForNode) {
       const togglePkg = findToggleAt(coords.x, coords.y, tForNode.transform.scale);
@@ -616,7 +695,7 @@ export default function FlowCanvas() {
     };
     if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [findNodeAt, findGroupHandleAt, findToggleAt, findHandleAt, findConnectionAt, getDiagramCoords, getFrameInCanvas, getTransform]);
+  }, [findNodeAt, findGroupHandleAt, findToggleAt, findHandleAt, findConnectionAt, findEndpointHandleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -696,6 +775,31 @@ export default function FlowCanvas() {
       const targetId = target && target.id !== drag.sourceId ? target.id : null;
       connectionDraftRef.current = {
         sourceId: drag.sourceId,
+        cursorX: coords.x,
+        cursorY: coords.y,
+        targetId,
+      };
+      canvas.style.cursor = targetId ? 'alias' : 'crosshair';
+      return;
+    }
+
+    if (drag.kind === 'rewire-connection') {
+      const coords = getDiagramCoords(e);
+      if (!coords) return;
+      const t = getTransform();
+      const target = findNodeAt(coords.x, coords.y, t?.transform.scale);
+      // Look up the current endpoint we're holding fixed so we can reject a
+      // no-op drop (rewiring to the same node it already points at).
+      const ast = useFlowStore.getState().ast;
+      const conn = ast?.connections.find((c) => c.id === drag.connId);
+      const fixedId = conn ? (drag.end === 'source' ? conn.target : conn.source) : null;
+      const movingId = conn ? (drag.end === 'source' ? conn.source : conn.target) : null;
+      const targetId =
+        target && target.id !== fixedId && target.id !== movingId ? target.id : null;
+      rewireDraftRef.current = {
+        connId: drag.connId,
+        end: drag.end,
+        anchor: drag.anchor,
         cursorX: coords.x,
         cursorY: coords.y,
         targetId,
@@ -809,6 +913,20 @@ export default function FlowCanvas() {
       const sourceText = useFlowStore.getState().sourceText;
       if (!ast) return;
       const updated = appendConnection(sourceText, ast, draft.sourceId, draft.targetId);
+      if (updated !== sourceText) useFlowStore.getState().setSourceText(updated);
+      return;
+    }
+
+    if (drag.kind === 'rewire-connection') {
+      const draft = rewireDraftRef.current;
+      rewireDraftRef.current = null;
+      if (!draft || !draft.targetId) return;
+      const ast = useFlowStore.getState().ast;
+      const sourceText = useFlowStore.getState().sourceText;
+      if (!ast) return;
+      const updated = updateConnection(sourceText, ast, draft.connId, {
+        [draft.end]: draft.targetId,
+      } as { source?: string; target?: string });
       if (updated !== sourceText) useFlowStore.getState().setSourceText(updated);
       return;
     }
@@ -959,10 +1077,14 @@ export default function FlowCanvas() {
         useFlowStore.getState().clearSelection();
         useFlowStore.getState().setToolMode('select');
         setRenameOverlay(null);
-        // Cancel an in-progress connection-create drag.
+        // Cancel an in-progress connection-create or rewire drag.
         if (dragRef.current?.kind === 'create-connection') {
           dragRef.current = null;
           connectionDraftRef.current = null;
+          if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+        } else if (dragRef.current?.kind === 'rewire-connection') {
+          dragRef.current = null;
+          rewireDraftRef.current = null;
           if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
         }
         return;

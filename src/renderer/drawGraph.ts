@@ -53,6 +53,17 @@ export interface DrawOptions {
     cursorY: number;
     targetId: string | null;
   } | null;
+  /** Active rewire draft: dragging the source or target endpoint of an
+   *  already-existing connection. Draws a dashed preview from the fixed
+   *  endpoint to the cursor and highlights the prospective drop target. */
+  rewireDraft?: {
+    connId: string;
+    end: 'source' | 'target';
+    anchor: Point;
+    cursorX: number;
+    cursorY: number;
+    targetId: string | null;
+  } | null;
 }
 
 /** Connection-handle positions for a node in diagram coords. */
@@ -68,6 +79,17 @@ export function getNodeHandles(node: LayoutNode): { side: 'n' | 's' | 'e' | 'w';
 /** Visible radius of a connection handle in diagram coords, given the current zoom. */
 export function nodeHandleRadius(zc: number): number {
   return 5 * zc;
+}
+
+/** Endpoint coords for a selected connection's rewire handles. */
+export function getConnectionEndpoints(points: Point[]): { source: Point; target: Point } | null {
+  if (points.length < 2) return null;
+  return { source: points[0]!, target: points[points.length - 1]! };
+}
+
+/** Visible radius of an endpoint rewire handle in diagram coords. */
+export function endpointHandleRadius(zc: number): number {
+  return 6 * zc;
 }
 
 /** Return the factor that, when multiplied with a base diagram-coord size,
@@ -649,10 +671,11 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
     options.selectionKind === 'component' ? options.selectedId ?? null : null;
   const hoveredId = options.hoveredId ?? null;
   const draft = options.connectionDraft ?? null;
+  const rewire = options.rewireDraft ?? null;
   for (const node of layout.nodes) {
     if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
     const isSelected = node.id === selectedComponentId;
-    const isDropTarget = draft?.targetId === node.id;
+    const isDropTarget = draft?.targetId === node.id || rewire?.targetId === node.id;
     drawNode(ctx, node, isSelected || isDropTarget);
   }
 
@@ -671,6 +694,52 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
       drawConnectionDraft(ctx, sourceNode, draft, zc);
     }
   }
+
+  // 5. Rewire handles on the selected connection's endpoints. These render
+  //    last so they sit on top of the edge stroke and arrowhead.
+  if (selectedConnectionId && !rewire) {
+    const sel = layout.edges.find((e) => e.id === selectedConnectionId);
+    if (sel) {
+      const eff = effectiveEdges?.get(sel.id);
+      const points = eff?.points ?? sel.points;
+      const ends = getConnectionEndpoints(points);
+      if (ends) drawEndpointHandles(ctx, ends.source, ends.target, zc);
+    }
+  }
+
+  // 6. Rewire preview: dashed line from the fixed endpoint to the cursor.
+  if (rewire) {
+    ctx.save();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 2 * zc;
+    ctx.setLineDash([6 * zc, 4 * zc]);
+    ctx.beginPath();
+    ctx.moveTo(rewire.anchor.x, rewire.anchor.y);
+    ctx.lineTo(rewire.cursorX, rewire.cursorY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+}
+
+function drawEndpointHandles(
+  ctx: CanvasRenderingContext2D,
+  source: Point,
+  target: Point,
+  zc: number,
+) {
+  const r = endpointHandleRadius(zc);
+  ctx.save();
+  for (const p of [source, target]) {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fill();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5 * zc;
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawConnectionHandles(ctx: CanvasRenderingContext2D, node: LayoutNode, zc: number) {

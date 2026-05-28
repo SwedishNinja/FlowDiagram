@@ -291,6 +291,8 @@ export function updateConnection(
   doc: FlowDocument,
   id: string,
   updates: {
+    source?: string;
+    target?: string;
     label?: string | null;
     lineStyle?: 'solid' | 'dotted';
     arrowStyle?: 'forward' | 'long' | 'bidirectional';
@@ -299,6 +301,8 @@ export function updateConnection(
   const conn = doc.connections.find((c) => c.id === id);
   if (!conn?.loc) return text;
 
+  const source = updates.source ?? conn.source;
+  const target = updates.target ?? conn.target;
   const label = 'label' in updates ? updates.label : conn.label;
   const lineStyle = updates.lineStyle ?? conn.lineStyle;
   const arrowStyle = updates.arrowStyle ?? conn.arrowStyle;
@@ -313,7 +317,7 @@ export function updateConnection(
   // The parser assigns `_conn_N` to unnamed connections — those aren't in
   // source and shouldn't be reintroduced.
   const idPart = conn.id && !conn.id.startsWith('_conn_') ? ` as ${conn.id}` : '';
-  let line = `${conn.source} ${arrow} ${conn.target}${idPart}`;
+  let line = `${source} ${arrow} ${target}${idPart}`;
   if (label) line += ` : ${label}`;
 
   return text.slice(0, conn.loc.start) + line + text.slice(conn.loc.end);
