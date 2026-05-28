@@ -246,6 +246,39 @@ export function appendConnection(
 }
 
 /**
+ * Replace a component's declaration with a canonical line carrying the
+ * supplied field updates. Fields not present in `updates` retain their
+ * current value; passing `null` for color or stereotype clears the field.
+ *
+ * Trade-off: this normalizes the declaration's formatting (always emits the
+ * `component "Display" as id …` form, drops the bracket alias `[X]`). Other
+ * lines are untouched.
+ */
+export function updateComponent(
+  text: string,
+  doc: FlowDocument,
+  id: string,
+  updates: {
+    displayName?: string;
+    color?: string | null;
+    stereotype?: string | null;
+  },
+): string {
+  const comp = doc.components.find((c) => c.id === id);
+  if (!comp?.loc) return text;
+
+  const displayName = updates.displayName ?? comp.displayName;
+  const color = 'color' in updates ? updates.color : comp.color;
+  const stereotype = 'stereotype' in updates ? updates.stereotype : comp.stereotype;
+
+  let line = `component "${displayName}" as ${id}`;
+  if (color) line += ` #${color.replace(/^#/, '')}`;
+  if (stereotype) line += ` <<${stereotype}>>`;
+
+  return text.slice(0, comp.loc.start) + line + text.slice(comp.loc.end);
+}
+
+/**
  * Rename a component everywhere: its declaration alias + any connection
  * source/target reference. Flows reference connection IDs, not component
  * IDs, so they aren't touched here.

@@ -8,6 +8,7 @@ import {
   deleteFlow,
   generateUniqueComponentId,
   renameComponent,
+  updateComponent,
 } from '../parser/textMutations';
 
 function parseOk(src: string) {
@@ -223,6 +224,76 @@ component "A" as a
     const out = createComponent(src, doc, { id: 'a', displayName: 'A' });
     expect(out).toContain('component "A" as a');
     expect(out.indexOf('component "A"')).toBeLessThan(out.indexOf('@enduml'));
+    parseOk(out);
+  });
+});
+
+describe('updateComponent', () => {
+  it('updates the display name and preserves color + stereotype', () => {
+    const src = `@startuml
+component "Old Name" as a #ff0000 <<service>>
+component "B" as b
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', { displayName: 'New Name' });
+    expect(out).toContain('component "New Name" as a #ff0000 <<service>>');
+    expect(out).toContain('component "B" as b');
+    parseOk(out);
+  });
+
+  it('adds a color when none was present', () => {
+    const src = `@startuml
+component "A" as a
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', { color: 'aabbcc' });
+    expect(out).toContain('component "A" as a #aabbcc');
+    parseOk(out);
+  });
+
+  it('replaces an existing color (strips leading #)', () => {
+    const src = `@startuml
+component "A" as a #111111
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', { color: '#22ee44' });
+    expect(out).toContain('component "A" as a #22ee44');
+    expect(out).not.toContain('#111111');
+    parseOk(out);
+  });
+
+  it('clears color and stereotype when passed null', () => {
+    const src = `@startuml
+component "A" as a #ff0000 <<svc>>
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', { color: null, stereotype: null });
+    expect(out).toContain('component "A" as a');
+    expect(out).not.toContain('#ff0000');
+    expect(out).not.toContain('<<svc>>');
+    parseOk(out);
+  });
+
+  it('updates multiple fields at once and leaves other lines untouched', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab : link
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', {
+      displayName: 'Apex',
+      color: 'd4ff3a',
+      stereotype: 'core',
+    });
+    expect(out).toContain('component "Apex" as a #d4ff3a <<core>>');
+    expect(out).toContain('component "B" as b');
+    expect(out).toContain('a -> b as ab : link');
     parseOk(out);
   });
 });

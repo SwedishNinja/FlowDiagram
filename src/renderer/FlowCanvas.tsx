@@ -12,6 +12,7 @@ import {
   generateUniqueComponentId,
   renameComponent,
 } from '../parser/textMutations';
+import Inspector from './Inspector';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -955,6 +956,7 @@ export default function FlowCanvas() {
         }}
       />
       <ToolPalette activeTool={toolMode} />
+      <Inspector />
       {renameOverlay && (
         <RenameInput
           key={renameOverlay.nodeId}
