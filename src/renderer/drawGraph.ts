@@ -38,6 +38,32 @@ export interface DrawOptions {
   scale?: number;
   /** ID of the currently-selected node. Drawn with a highlight ring. */
   selectedId?: string | null;
+  /** ID of the node the pointer is currently hovering over (when not dragging).
+   *  Used to surface the connection-create handles. */
+  hoveredId?: string | null;
+  /** Active connection-create draft: line from source handle to cursor, target
+   *  highlighted if the cursor sits on a node. */
+  connectionDraft?: {
+    sourceId: string;
+    cursorX: number;
+    cursorY: number;
+    targetId: string | null;
+  } | null;
+}
+
+/** Connection-handle positions for a node in diagram coords. */
+export function getNodeHandles(node: LayoutNode): { side: 'n' | 's' | 'e' | 'w'; x: number; y: number }[] {
+  return [
+    { side: 'n', x: node.x + node.width / 2, y: node.y },
+    { side: 's', x: node.x + node.width / 2, y: node.y + node.height },
+    { side: 'e', x: node.x + node.width, y: node.y + node.height / 2 },
+    { side: 'w', x: node.x, y: node.y + node.height / 2 },
+  ];
+}
+
+/** Visible radius of a connection handle in diagram coords, given the current zoom. */
+export function nodeHandleRadius(zc: number): number {
+  return 5 * zc;
 }
 
 /** Return the factor that, when multiplied with a base diagram-coord size,
@@ -609,10 +635,72 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
 
   // 3. Nodes — hide when inside a collapsed ancestor.
   const selectedId = options.selectedId ?? null;
+  const hoveredId = options.hoveredId ?? null;
+  const draft = options.connectionDraft ?? null;
   for (const node of layout.nodes) {
     if (nodeIsHidden(node.id, parentOf, collapsedGroups)) continue;
-    drawNode(ctx, node, node.id === selectedId);
+    const isSelected = node.id === selectedId;
+    const isDropTarget = draft?.targetId === node.id;
+    drawNode(ctx, node, isSelected || isDropTarget);
   }
+
+  // 4. Connection-create overlays. Handles render on hover; the live draft
+  // line renders on top of everything else.
+  if (hoveredId && !draft) {
+    const hovered = layout.nodes.find((n) => n.id === hoveredId);
+    if (hovered && !nodeIsHidden(hovered.id, parentOf, collapsedGroups)) {
+      drawConnectionHandles(ctx, hovered, zc);
+    }
+  }
+  if (draft) {
+    const sourceNode = layout.nodes.find((n) => n.id === draft.sourceId);
+    if (sourceNode) {
+      drawConnectionHandles(ctx, sourceNode, zc);
+      drawConnectionDraft(ctx, sourceNode, draft, zc);
+    }
+  }
+}
+
+function drawConnectionHandles(ctx: CanvasRenderingContext2D, node: LayoutNode, zc: number) {
+  const r = nodeHandleRadius(zc);
+  ctx.save();
+  for (const h of getNodeHandles(node)) {
+    ctx.beginPath();
+    ctx.arc(h.x, h.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5 * zc;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawConnectionDraft(
+  ctx: CanvasRenderingContext2D,
+  source: LayoutNode,
+  draft: NonNullable<DrawOptions['connectionDraft']>,
+  zc: number,
+) {
+  // Anchor the line at the source handle nearest the cursor — feels more
+  // natural than always emitting from one fixed side.
+  const handles = getNodeHandles(source);
+  let best = handles[0]!;
+  let bestDist = Infinity;
+  for (const h of handles) {
+    const d = Math.hypot(h.x - draft.cursorX, h.y - draft.cursorY);
+    if (d < bestDist) { bestDist = d; best = h; }
+  }
+  ctx.save();
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2 * zc;
+  ctx.setLineDash([6 * zc, 4 * zc]);
+  ctx.beginPath();
+  ctx.moveTo(best.x, best.y);
+  ctx.lineTo(draft.cursorX, draft.cursorY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 function depthOf(id: string, parentOf: Map<string, string | undefined>): number {

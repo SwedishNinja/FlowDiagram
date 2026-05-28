@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
 import {
+  appendConnection,
   deleteComponent,
   deleteConnection,
   deleteFlow,
@@ -147,6 +148,89 @@ describe('deleteFlow', () => {
     expect(out).toContain('@flow login on auth_conn');
     expect(out).toContain('every: 500ms');
 
+    parseOk(out);
+  });
+});
+
+describe('appendConnection', () => {
+  it('inserts after the last existing connection', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = appendConnection(src, doc, 'a', 'c');
+    expect(out).toBe(`@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+a -> c
+@enduml
+`);
+    parseOk(out);
+  });
+
+  it('inserts after the last component (with blank line) when no connections exist', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = appendConnection(src, doc, 'a', 'b');
+    expect(out).toBe(`@startuml
+component "A" as a
+component "B" as b
+
+a -> b
+@enduml
+`);
+    parseOk(out);
+  });
+
+  it('inserts before @positions when one exists', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+
+a -> b as ab
+
+@positions
+  a: 100, 100
+  b: 200, 100
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = appendConnection(src, doc, 'b', 'a');
+    const positionsIdx = out.indexOf('@positions');
+    const newConnIdx = out.indexOf('b -> a');
+    expect(newConnIdx).toBeGreaterThan(-1);
+    expect(newConnIdx).toBeLessThan(positionsIdx);
+    parseOk(out);
+  });
+
+  it('preserves comments around the insertion area', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+
+' wiring
+a -> b as ab
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = appendConnection(src, doc, 'b', 'a');
+    expect(out).toContain("' wiring");
+    expect(out).toContain('a -> b as ab');
+    expect(out).toContain('b -> a');
     parseOk(out);
   });
 });

@@ -111,6 +111,63 @@ function renameInComponentLine(line: string, oldId: string, newId: string): stri
 }
 
 /**
+ * Append a new `SRC -> TGT` connection to the source. Insertion point, in
+ * priority order:
+ *   1. Immediately after the last existing connection.
+ *   2. After the last component (with a blank line separator).
+ *   3. Before @positions / @enduml — whichever appears first.
+ *   4. End of file.
+ */
+export function appendConnection(
+  text: string,
+  doc: FlowDocument,
+  source: string,
+  target: string,
+): string {
+  const line = `${source} -> ${target}`;
+
+  let anchorEnd = -1;
+  let needsBlankLine = false;
+
+  for (const conn of doc.connections) {
+    if (conn.loc && conn.loc.end > anchorEnd) anchorEnd = conn.loc.end;
+  }
+
+  if (anchorEnd === -1) {
+    for (const comp of doc.components) {
+      if (comp.loc && comp.loc.end > anchorEnd) anchorEnd = comp.loc.end;
+    }
+    if (anchorEnd !== -1) needsBlankLine = true;
+  }
+
+  if (anchorEnd === -1) {
+    const positionsIdx = text.indexOf('@positions');
+    const endumlIdx = text.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      return text + (text.endsWith('\n') ? '' : '\n') + line + '\n';
+    }
+    const before = Math.min(...candidates);
+    return text.slice(0, before) + line + '\n\n' + text.slice(before);
+  }
+
+  // Advance to the start of the next line after the anchor.
+  let pos = anchorEnd;
+  if (text[pos - 1] !== '\n') {
+    if (text[pos] === '\r') pos++;
+    if (text[pos] === '\n') pos++;
+  }
+  const leading = needsBlankLine ? '\n' : '';
+  // If the anchor sits at EOF with no trailing newline, our advance was a
+  // no-op; insert a leading newline so the new line starts on its own row.
+  const insertion =
+    pos === anchorEnd && text[pos - 1] !== '\n'
+      ? '\n' + line + '\n'
+      : leading + line + '\n';
+  return text.slice(0, pos) + insertion + text.slice(pos);
+}
+
+/**
  * Rename a component everywhere: its declaration alias + any connection
  * source/target reference. Flows reference connection IDs, not component
  * IDs, so they aren't touched here.

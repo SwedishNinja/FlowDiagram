@@ -124,6 +124,17 @@ export function createAnimationLoop(
     manualCollapsed?: Record<string, true>;
     /** Currently selected node ID — drawn with a highlight ring. */
     selectedId?: string | null;
+    /** Node the pointer is currently hovering over (when no drag in progress).
+     *  Drives the connection-create handle overlay. */
+    hoveredId?: string | null;
+    /** Active connection-create draft. When set, draws a preview line from
+     *  the source node toward the cursor and highlights any target node. */
+    connectionDraft?: {
+      sourceId: string;
+      cursorX: number;
+      cursorY: number;
+      targetId: string | null;
+    } | null;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -165,7 +176,14 @@ export function createAnimationLoop(
 
     const zc = zoomCompensation(scale);
 
-    drawGraph(ctx, currentLayout, { collapsedGroups, effectiveEdges, scale, selectedId: state.selectedId ?? null });
+    drawGraph(ctx, currentLayout, {
+      collapsedGroups,
+      effectiveEdges,
+      scale,
+      selectedId: state.selectedId ?? null,
+      hoveredId: state.hoveredId ?? null,
+      connectionDraft: state.connectionDraft ?? null,
+    });
 
     if (state.isPlaying && lastTime !== null) {
       const deltaMs = Math.min(timestamp - lastTime, 50);

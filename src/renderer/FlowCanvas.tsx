@@ -1,11 +1,11 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
-import { groupToggleRect, zoomCompensation } from './drawGraph';
+import { groupToggleRect, zoomCompensation, getNodeHandles, nodeHandleRadius } from './drawGraph';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
-import { deleteComponent, renameComponent } from '../parser/textMutations';
+import { appendConnection, deleteComponent, renameComponent } from '../parser/textMutations';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -54,7 +54,18 @@ interface FrameResizeDragState {
   startFrameH: number;
 }
 
-type DragState = NodeDragState | GroupDragState | PanDragState | FrameMoveDragState | FrameResizeDragState;
+interface CreateConnectionDragState {
+  kind: 'create-connection';
+  sourceId: string;
+}
+
+type DragState =
+  | NodeDragState
+  | GroupDragState
+  | PanDragState
+  | FrameMoveDragState
+  | FrameResizeDragState
+  | CreateConnectionDragState;
 
 const FRAME_BORDER_HIT_PX = 8;   // how close (canvas px) to frame border to count as border hit
 const FRAME_CORNER_HIT_PX = 14;  // corner hit radius
@@ -111,6 +122,13 @@ export default function FlowCanvas() {
   const movedGroupsThisSessionRef = useRef<Set<string>>(new Set());
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
+  const hoveredIdRef = useRef<string | null>(null);
+  const connectionDraftRef = useRef<{
+    sourceId: string;
+    cursorX: number;
+    cursorY: number;
+    targetId: string | null;
+  } | null>(null);
   const layout = useFlowStore((s) => s.layout);
   const [renameOverlay, setRenameOverlay] = useState<RenameOverlay | null>(null);
 
@@ -131,6 +149,8 @@ export default function FlowCanvas() {
       collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
       manualCollapsed: useFlowStore.getState().manualCollapsed,
       selectedId: useFlowStore.getState().selectedId,
+      hoveredId: hoveredIdRef.current,
+      connectionDraft: connectionDraftRef.current,
     }));
 
     controllerRef.current = controller;
@@ -182,6 +202,25 @@ export default function FlowCanvas() {
       if (x >= n.x && x <= n.x + n.width && y >= n.y && y <= n.y + n.height) {
         return n;
       }
+    }
+    return null;
+  }, []);
+
+  /**
+   * Check if (x, y) sits on a connection-create handle of any visible node.
+   * Phase 2: only the currently hovered node exposes handles, so we test
+   * against that single node (callers pass the hovered id explicitly).
+   */
+  const findHandleAt = useCallback((x: number, y: number, nodeId: string, effectiveScale: number): LayoutNode | null => {
+    const current = useFlowStore.getState().layout;
+    if (!current) return null;
+    const node = current.nodes.find((n) => n.id === nodeId);
+    if (!node) return null;
+    const zc = zoomCompensation(effectiveScale);
+    const r = nodeHandleRadius(zc);
+    const hitR = r * 2.2; // generous click target around the visible dot
+    for (const h of getNodeHandles(node)) {
+      if (Math.hypot(x - h.x, y - h.y) <= hitR) return node;
     }
     return null;
   }, []);
@@ -382,7 +421,27 @@ export default function FlowCanvas() {
     if (!coords) return;
     const tForNode = getTransform();
 
-    // 2. Collapse/expand toggle hit — fires immediately, no drag.
+    // 2. Connection-create handle on the currently hovered node — start a
+    //    create-connection drag. Tested BEFORE the node body so grabbing a
+    //    handle doesn't get interpreted as a move.
+    const hoveredId = hoveredIdRef.current;
+    if (tForNode && hoveredId) {
+      const handleNode = findHandleAt(coords.x, coords.y, hoveredId, tForNode.transform.scale);
+      if (handleNode) {
+        connectionDraftRef.current = {
+          sourceId: handleNode.id,
+          cursorX: coords.x,
+          cursorY: coords.y,
+          targetId: null,
+        };
+        dragRef.current = { kind: 'create-connection', sourceId: handleNode.id };
+        if (canvasRef.current) canvasRef.current.style.cursor = 'crosshair';
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // 3. Collapse/expand toggle hit — fires immediately, no drag.
     if (tForNode) {
       const togglePkg = findToggleAt(coords.x, coords.y, tForNode.transform.scale);
       if (togglePkg) {
@@ -392,7 +451,7 @@ export default function FlowCanvas() {
       }
     }
 
-    // 3. Node hit-test — pass scale so hidden (collapsed-ancestor) nodes skip.
+    // 4. Node hit-test — pass scale so hidden (collapsed-ancestor) nodes skip.
     const node = findNodeAt(coords.x, coords.y, tForNode?.transform.scale);
 
     if (node) {
@@ -435,7 +494,7 @@ export default function FlowCanvas() {
     };
     if (canvasRef.current) canvasRef.current.style.cursor = 'grabbing';
     e.preventDefault();
-  }, [findNodeAt, findGroupHandleAt, findToggleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
+  }, [findNodeAt, findGroupHandleAt, findToggleAt, findHandleAt, getDiagramCoords, getFrameInCanvas, getTransform]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -450,22 +509,43 @@ export default function FlowCanvas() {
       const frameCanvas = getFrameInCanvas();
       if (frameCanvas) {
         const hit = hitTestFrame(cx, cy, frameCanvas);
-        if (hit === 'border') { canvas.style.cursor = 'move'; return; }
-        if (hit) { canvas.style.cursor = CORNER_TO_CURSOR[hit]; return; }
+        if (hit === 'border') {
+          hoveredIdRef.current = null;
+          canvas.style.cursor = 'move';
+          return;
+        }
+        if (hit) {
+          hoveredIdRef.current = null;
+          canvas.style.cursor = CORNER_TO_CURSOR[hit];
+          return;
+        }
       }
       const coords = getDiagramCoords(e);
       if (coords) {
         const t = getTransform();
         if (t && findToggleAt(coords.x, coords.y, t.transform.scale)) {
+          hoveredIdRef.current = null;
           canvas.style.cursor = 'pointer';
           return;
         }
-        if (findNodeAt(coords.x, coords.y, t?.transform.scale)) { canvas.style.cursor = 'grab'; return; }
+        const hoverNode = findNodeAt(coords.x, coords.y, t?.transform.scale);
+        if (hoverNode) {
+          hoveredIdRef.current = hoverNode.id;
+          // Crosshair on the handles signals "drag from here to connect".
+          if (t && findHandleAt(coords.x, coords.y, hoverNode.id, t.transform.scale)) {
+            canvas.style.cursor = 'crosshair';
+          } else {
+            canvas.style.cursor = 'grab';
+          }
+          return;
+        }
         if (t && findGroupHandleAt(coords.x, coords.y, t.transform.scale)) {
+          hoveredIdRef.current = null;
           canvas.style.cursor = 'grab';
           return;
         }
       }
+      hoveredIdRef.current = null;
       canvas.style.cursor = 'grab';
       return;
     }
@@ -475,6 +555,23 @@ export default function FlowCanvas() {
       const dy = e.clientY - drag.startClientY;
       panRef.current = { x: drag.startPanX + dx, y: drag.startPanY + dy };
       canvas.style.cursor = 'grabbing';
+      return;
+    }
+
+    if (drag.kind === 'create-connection') {
+      const coords = getDiagramCoords(e);
+      if (!coords) return;
+      const t = getTransform();
+      const target = findNodeAt(coords.x, coords.y, t?.transform.scale);
+      // A drop on the source itself doesn't count as a valid target.
+      const targetId = target && target.id !== drag.sourceId ? target.id : null;
+      connectionDraftRef.current = {
+        sourceId: drag.sourceId,
+        cursorX: coords.x,
+        cursorY: coords.y,
+        targetId,
+      };
+      canvas.style.cursor = targetId ? 'alias' : 'crosshair';
       return;
     }
 
@@ -574,6 +671,18 @@ export default function FlowCanvas() {
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     dragRef.current = null;
     if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+
+    if (drag.kind === 'create-connection') {
+      const draft = connectionDraftRef.current;
+      connectionDraftRef.current = null;
+      if (!draft || !draft.targetId) return;
+      const ast = useFlowStore.getState().ast;
+      const sourceText = useFlowStore.getState().sourceText;
+      if (!ast) return;
+      const updated = appendConnection(sourceText, ast, draft.sourceId, draft.targetId);
+      if (updated !== sourceText) useFlowStore.getState().setSourceText(updated);
+      return;
+    }
 
     if (drag.kind === 'pan' || drag.kind === 'frame-move' || drag.kind === 'frame-resize') return;
 
@@ -720,6 +829,12 @@ export default function FlowCanvas() {
       if (e.key === 'Escape') {
         useFlowStore.getState().clearSelection();
         setRenameOverlay(null);
+        // Cancel an in-progress connection-create drag.
+        if (dragRef.current?.kind === 'create-connection') {
+          dragRef.current = null;
+          connectionDraftRef.current = null;
+          if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
+        }
         return;
       }
       if (isEditableTarget(e.target)) return;
