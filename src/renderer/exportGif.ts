@@ -36,6 +36,9 @@ export interface GifExportOptions {
   background?: string;
 }
 
+/** How many evenly-spaced frames to sample when building the palette. */
+const PALETTE_SAMPLE_FRAMES = 12;
+
 export async function exportGif(
   doc: FlowDocument,
   layout: LayoutResult,
@@ -54,26 +57,14 @@ export async function exportGif(
   canvas.height = height;
   const ctx = canvas.getContext('2d')!;
 
-  const particleSystem = new ParticleSystem();
-  particleSystem.init(doc, layout);
-
   const viewport = options.viewport ?? computeLayoutBounds(layout);
   const { scale, offsetX, offsetY } = computeViewportTransform(width, height, viewport);
 
-  const gif = GIFEncoder();
   const totalFrames = Math.ceil(duration * fps);
   const frameDelay = 1000 / fps;
   const edgeLookup = edgeLookupFromLayout(layout.edges);
 
-  // Palette strategy: quantize ONCE from frame 0 and reuse for every frame.
-  // Reserve palette index 255 as "transparent" so delta frames can mark
-  // unchanged pixels transparent (the previous frame shows through) —
-  // dramatically shrinks file size on animations with a static background.
-  const TRANSPARENT_INDEX = 255;
-  let globalPalette: number[][] | null = null;
-  let prevIndexed: Uint8Array | null = null;
-
-  function renderFrame() {
+  function renderAt(particleSystem: ParticleSystem) {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, width, height);
     ctx.save();
@@ -86,23 +77,61 @@ export async function exportGif(
     return ctx.getImageData(0, 0, width, height);
   }
 
+  // --- Palette pre-pass --------------------------------------------------
+  // Sample evenly-spaced frames across the full animation, concatenate the
+  // pixel data, and quantize once. This captures composited colors that
+  // only appear mid-animation (alpha-blended particle glows, stage-gated
+  // flows that start late, etc.) — frame 0 alone misses most of them and
+  // produces visibly wrong colors when those frames map to nearest palette
+  // entries.
+  const sampleCount = Math.min(PALETTE_SAMPLE_FRAMES, totalFrames);
+  const sampleIndices = new Set<number>();
+  for (let s = 0; s < sampleCount; s++) {
+    sampleIndices.add(Math.floor((s * totalFrames) / sampleCount));
+  }
+  const bytesPerFrame = width * height * 4;
+  const sampleBuffer = new Uint8ClampedArray(sampleIndices.size * bytesPerFrame);
+  {
+    const ps = new ParticleSystem();
+    ps.init(doc, layout);
+    let writeOff = 0;
+    for (let i = 0; i < totalFrames; i++) {
+      const data = renderAt(ps).data;
+      if (sampleIndices.has(i)) {
+        sampleBuffer.set(data, writeOff);
+        writeOff += bytesPerFrame;
+      }
+      if (i % 10 === 0) await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  // Reserve palette index 255 as "transparent" so delta frames can mark
+  // unchanged pixels transparent (the previous frame shows through) —
+  // dramatically shrinks file size on animations with a static background.
+  const TRANSPARENT_INDEX = 255;
+  const globalPalette = quantize(sampleBuffer, 255, { format: 'rgb565' });
+  while (globalPalette.length < 256) globalPalette.push([0, 0, 0]);
+
+  // --- Encoding pass -----------------------------------------------------
+  // Fresh ParticleSystem so simulation starts from t=0 again (the sample
+  // pass advanced state through every frame).
+  const particleSystem = new ParticleSystem();
+  particleSystem.init(doc, layout);
+
+  const gif = GIFEncoder();
+  let prevIndexed: Uint8Array | null = null;
+
   for (let i = 0; i < totalFrames; i++) {
-    const imageData = renderFrame();
+    const imageData = renderAt(particleSystem);
+    const indexed = applyPalette(imageData.data, globalPalette);
 
     if (i === 0) {
-      const palette = quantize(imageData.data, 255, { format: 'rgb565' });
-      while (palette.length < 256) palette.push([0, 0, 0]);
-      globalPalette = palette;
-
-      const indexed = applyPalette(imageData.data, palette);
       gif.writeFrame(indexed, width, height, {
-        palette,
+        palette: globalPalette,
         delay: Math.round(frameDelay),
         dispose: 1,
       });
-      prevIndexed = indexed;
     } else {
-      const indexed = applyPalette(imageData.data, globalPalette!);
       const delta = new Uint8Array(indexed.length);
       const prev = prevIndexed!;
       for (let p = 0; p < indexed.length; p++) {
@@ -114,13 +143,11 @@ export async function exportGif(
         transparentIndex: TRANSPARENT_INDEX,
         dispose: 1,
       });
-      prevIndexed = indexed;
     }
+    prevIndexed = indexed;
 
     // Yield every 10 frames so the UI doesn't freeze during encoding.
-    if (i % 10 === 0) {
-      await new Promise((r) => setTimeout(r, 0));
-    }
+    if (i % 10 === 0) await new Promise((r) => setTimeout(r, 0));
   }
 
   gif.finish();
