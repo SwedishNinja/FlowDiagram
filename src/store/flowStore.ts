@@ -58,6 +58,11 @@ export interface FlowStore {
   selectionKind: 'component' | null;
   setSelection: (id: string, kind: 'component') => void;
   clearSelection: () => void;
+
+  /** Active canvas tool. 'select' is the default — clicks select/drag nodes.
+   *  'add-component' makes clicks on empty area create a new component. */
+  toolMode: 'select' | 'add-component';
+  setToolMode: (mode: 'select' | 'add-component') => void;
 }
 
 const STORAGE_KEY = 'flowdiagram-source';
@@ -162,5 +167,8 @@ export const useFlowStore = create<FlowStore>()(
     selectionKind: null,
     setSelection: (id, kind) => set({ selectedId: id, selectionKind: kind }),
     clearSelection: () => set({ selectedId: null, selectionKind: null }),
+
+    toolMode: 'select',
+    setToolMode: (toolMode) => set({ toolMode }),
   })),
 );

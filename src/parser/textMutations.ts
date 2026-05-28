@@ -5,6 +5,7 @@
  */
 
 import type { FlowDocument, SourceLoc } from '../types';
+import { updatePositionsInSource } from './updatePositions';
 
 interface Edit {
   start: number;
@@ -108,6 +109,83 @@ function renameInConnectionLine(line: string, oldId: string, newId: string): str
  *  The QuotedString display name is preserved verbatim. */
 function renameInComponentLine(line: string, oldId: string, newId: string): string {
   return line.replace(new RegExp(`(\\bas\\s+)${oldId}\\b`), `$1${newId}`);
+}
+
+/** Pick the lowest-numbered `${prefix}N` alias that doesn't collide with any
+ *  existing ID in the document (components, groups, connections, or flows). */
+export function generateUniqueComponentId(doc: FlowDocument, prefix: string = 'node'): string {
+  const taken = new Set<string>([
+    ...doc.components.map((c) => c.id),
+    ...doc.groups.map((g) => g.id),
+    ...doc.connections.map((c) => c.id),
+    ...doc.flows.map((f) => f.name),
+  ]);
+  let n = 1;
+  while (taken.has(`${prefix}${n}`)) n++;
+  return `${prefix}${n}`;
+}
+
+/**
+ * Append a new component declaration. When `position` is supplied, the new
+ * component's id is also written into the `@positions` block so layout pins
+ * it at the click location instead of letting ELK decide.
+ *
+ * Insertion order, in priority: after the last component, else after the
+ * last connection (with a blank line), else before @positions / @enduml.
+ */
+export function createComponent(
+  text: string,
+  doc: FlowDocument,
+  opts: { id: string; displayName: string; position?: { x: number; y: number } },
+): string {
+  const line = `component "${opts.displayName}" as ${opts.id}`;
+
+  let anchorEnd = -1;
+  let needsBlankLine = false;
+
+  for (const c of doc.components) {
+    if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
+  }
+
+  if (anchorEnd === -1) {
+    for (const conn of doc.connections) {
+      if (conn.loc && conn.loc.end > anchorEnd) anchorEnd = conn.loc.end;
+    }
+    if (anchorEnd !== -1) needsBlankLine = true;
+  }
+
+  let withComponent: string;
+  if (anchorEnd === -1) {
+    const positionsIdx = text.indexOf('@positions');
+    const endumlIdx = text.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      withComponent = text + (text.endsWith('\n') ? '' : '\n') + line + '\n';
+    } else {
+      const before = Math.min(...candidates);
+      withComponent = text.slice(0, before) + line + '\n\n' + text.slice(before);
+    }
+  } else {
+    let pos = anchorEnd;
+    if (text[pos - 1] !== '\n') {
+      if (text[pos] === '\r') pos++;
+      if (text[pos] === '\n') pos++;
+    }
+    const leading = needsBlankLine ? '\n' : '';
+    const insertion =
+      pos === anchorEnd && text[pos - 1] !== '\n'
+        ? '\n' + line + '\n'
+        : leading + line + '\n';
+    withComponent = text.slice(0, pos) + insertion + text.slice(pos);
+  }
+
+  if (!opts.position) return withComponent;
+
+  // Position pinning: merge into the existing @positions block (or create
+  // one). We preserve current positions verbatim and just add ours.
+  const positions: Record<string, { x: number; y: number }> = { ...doc.positions };
+  positions[opts.id] = opts.position;
+  return updatePositionsInSource(withComponent, positions);
 }
 
 /**

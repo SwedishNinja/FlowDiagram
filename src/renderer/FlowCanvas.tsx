@@ -5,7 +5,13 @@ import { groupToggleRect, zoomCompensation, getNodeHandles, nodeHandleRadius } f
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
 import { updatePositionsInSource } from '../parser/updatePositions';
-import { appendConnection, deleteComponent, renameComponent } from '../parser/textMutations';
+import {
+  appendConnection,
+  createComponent,
+  deleteComponent,
+  generateUniqueComponentId,
+  renameComponent,
+} from '../parser/textMutations';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -129,7 +135,11 @@ export default function FlowCanvas() {
     cursorY: number;
     targetId: string | null;
   } | null>(null);
+  /** When a component is created via click-to-place, its id is staged here so
+   *  the rename overlay can open on the very next layout pass. */
+  const pendingRenameRef = useRef<string | null>(null);
   const layout = useFlowStore((s) => s.layout);
+  const toolMode = useFlowStore((s) => s.toolMode);
   const [renameOverlay, setRenameOverlay] = useState<RenameOverlay | null>(null);
 
   // Initialize animation loop once
@@ -166,6 +176,22 @@ export default function FlowCanvas() {
     if (layout && controllerRef.current) {
       controllerRef.current.updateLayout(layout);
     }
+  }, [layout]);
+
+  // After click-to-place creates a node, open the inline rename overlay as
+  // soon as the new layout pass contains it.
+  useEffect(() => {
+    if (!layout) return;
+    const pending = pendingRenameRef.current;
+    if (!pending) return;
+    const node = layout.nodes.find((n) => n.id === pending);
+    if (!node) return;
+    pendingRenameRef.current = null;
+    useFlowStore.getState().setSelection(pending, 'component');
+    beginRename(node);
+    // beginRename is stable (useCallback with empty deps), so we don't need it
+    // listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout]);
 
   const particleResetSignal = useFlowStore((s) => s.particleResetSignal);
@@ -384,6 +410,44 @@ export default function FlowCanvas() {
 
     e.currentTarget.setPointerCapture(e.pointerId);
 
+    // 0. Add-component tool: clicks on empty canvas create a new node at
+    // the click position and stage it for inline rename. Non-empty clicks
+    // fall through to normal handling after reverting to select mode.
+    const currentTool = useFlowStore.getState().toolMode;
+    if (currentTool === 'add-component') {
+      const coords = getDiagramCoords(e);
+      const t = getTransform();
+      if (coords && t) {
+        const scale = t.transform.scale;
+        const onNode = !!findNodeAt(coords.x, coords.y, scale);
+        const onToggle = !!findToggleAt(coords.x, coords.y, scale);
+        const onGroup = !!findGroupHandleAt(coords.x, coords.y, scale);
+        const fc = getFrameInCanvas();
+        const onFrame = fc ? !!hitTestFrame(cx, cy, fc) : false;
+        if (!onNode && !onToggle && !onGroup && !onFrame) {
+          const ast = useFlowStore.getState().ast;
+          const sourceText = useFlowStore.getState().sourceText;
+          if (!ast) return;
+          const id = generateUniqueComponentId(ast);
+          const updated = createComponent(sourceText, ast, {
+            id,
+            displayName: id,
+            position: { x: coords.x, y: coords.y },
+          });
+          if (updated !== sourceText) {
+            useFlowStore.getState().setSourceText(updated);
+            pendingRenameRef.current = id;
+          }
+          useFlowStore.getState().setToolMode('select');
+          e.preventDefault();
+          return;
+        }
+      }
+      // Non-empty click — drop back into select mode and let the normal
+      // cascade below handle whatever was clicked.
+      useFlowStore.getState().setToolMode('select');
+    }
+
     // 1. Frame hit-test has priority if frame is shown (so user can grab frame even over empty area)
     const frameCanvas = getFrameInCanvas();
     const frame = useFlowStore.getState().exportFrame;
@@ -505,6 +569,13 @@ export default function FlowCanvas() {
     const cy = e.clientY - rect.top;
 
     if (!drag) {
+      // Add-component mode: show a crosshair everywhere as a constant signal
+      // that the next click will place a node.
+      if (useFlowStore.getState().toolMode === 'add-component') {
+        hoveredIdRef.current = null;
+        canvas.style.cursor = 'crosshair';
+        return;
+      }
       // Hover cursor: frame-aware, then node, then group handle, else pan.
       const frameCanvas = getFrameInCanvas();
       if (frameCanvas) {
@@ -828,6 +899,7 @@ export default function FlowCanvas() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') {
         useFlowStore.getState().clearSelection();
+        useFlowStore.getState().setToolMode('select');
         setRenameOverlay(null);
         // Cancel an in-progress connection-create drag.
         if (dragRef.current?.kind === 'create-connection') {
@@ -838,6 +910,19 @@ export default function FlowCanvas() {
         return;
       }
       if (isEditableTarget(e.target)) return;
+
+      // Tool mode shortcuts.
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === 'v' || e.key === 'V') {
+          useFlowStore.getState().setToolMode('select');
+          return;
+        }
+        if (e.key === 'c' || e.key === 'C') {
+          useFlowStore.getState().setToolMode('add-component');
+          return;
+        }
+      }
+
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const { selectedId, selectionKind, ast, sourceText, setSourceText, clearSelection } =
         useFlowStore.getState();
@@ -869,6 +954,7 @@ export default function FlowCanvas() {
           cursor: 'grab',
         }}
       />
+      <ToolPalette activeTool={toolMode} />
       {renameOverlay && (
         <RenameInput
           key={renameOverlay.nodeId}
@@ -878,6 +964,73 @@ export default function FlowCanvas() {
         />
       )}
     </div>
+  );
+}
+
+function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' }) {
+  const setToolMode = useFlowStore((s) => s.setToolMode);
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 12,
+        left: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        background: '#ffffff',
+        borderRadius: 8,
+        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.12)',
+        padding: 4,
+        zIndex: 10,
+      }}
+    >
+      <ToolButton
+        active={activeTool === 'select'}
+        onClick={() => setToolMode('select')}
+        label="Select"
+        shortcut="V"
+      />
+      <ToolButton
+        active={activeTool === 'add-component'}
+        onClick={() => setToolMode('add-component')}
+        label="Add Component"
+        shortcut="C"
+      />
+    </div>
+  );
+}
+
+function ToolButton({
+  active,
+  onClick,
+  label,
+  shortcut,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  shortcut: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`${label} (${shortcut})`}
+      style={{
+        font: '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        background: active ? '#3b82f6' : 'transparent',
+        color: active ? '#ffffff' : '#475569',
+        border: 'none',
+        borderRadius: 4,
+        padding: '6px 10px',
+        cursor: 'pointer',
+        textAlign: 'left',
+        minWidth: 130,
+      }}
+    >
+      {label}
+    </button>
   );
 }
 

@@ -2,9 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
 import {
   appendConnection,
+  createComponent,
   deleteComponent,
   deleteConnection,
   deleteFlow,
+  generateUniqueComponentId,
   renameComponent,
 } from '../parser/textMutations';
 
@@ -148,6 +150,79 @@ describe('deleteFlow', () => {
     expect(out).toContain('@flow login on auth_conn');
     expect(out).toContain('every: 500ms');
 
+    parseOk(out);
+  });
+});
+
+describe('generateUniqueComponentId', () => {
+  it('returns node1 for an empty doc', () => {
+    const doc = parseOk(`@startuml
+@enduml
+`);
+    expect(generateUniqueComponentId(doc)).toBe('node1');
+  });
+
+  it('skips IDs already taken by components, groups, connections, or flows', () => {
+    const src = `@startuml
+component "A" as node1
+component "B" as node3
+package "Group" as node2 {
+}
+node1 -> node3 as conn1
+@flow node5 on conn1
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    // node1, node2, node3 are taken; node5 is a flow name; node4 is free.
+    expect(generateUniqueComponentId(doc)).toBe('node4');
+  });
+});
+
+describe('createComponent', () => {
+  it('appends after the last existing component', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createComponent(src, doc, { id: 'c', displayName: 'C' });
+    expect(out).toBe(`@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+@enduml
+`);
+    parseOk(out);
+  });
+
+  it('embeds a @positions entry when position is supplied', () => {
+    const src = `@startuml
+component "A" as a
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createComponent(src, doc, {
+      id: 'b',
+      displayName: 'B',
+      position: { x: 300, y: 200 },
+    });
+    expect(out).toContain('component "B" as b');
+    expect(out).toContain('@positions');
+    expect(out).toContain('b: 300, 200');
+    const newDoc = parseOk(out);
+    expect(newDoc.positions.b).toEqual({ x: 300, y: 200 });
+  });
+
+  it('appends after connections (with blank line) when no components exist with loc info', () => {
+    const src = `@startuml
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createComponent(src, doc, { id: 'a', displayName: 'A' });
+    expect(out).toContain('component "A" as a');
+    expect(out.indexOf('component "A"')).toBeLessThan(out.indexOf('@enduml'));
     parseOk(out);
   });
 });
