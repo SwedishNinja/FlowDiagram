@@ -7,6 +7,7 @@ import {
   deleteComponent,
   deleteConnection,
   deleteFlow,
+  deleteGroup,
   findConnectionBetween,
   generateUniqueComponentId,
   generateUniqueFlowName,
@@ -14,6 +15,7 @@ import {
   renameComponent,
   renameConnection,
   renameFlow,
+  ungroupPackage,
   updateComponent,
   updateConnection,
   updateFlow,
@@ -814,6 +816,81 @@ group1 -> b as group2
 `;
     const doc = parseOk(src);
     expect(generateUniqueGroupId(doc)).toBe('group3');
+  });
+});
+
+describe('ungroupPackage', () => {
+  it('dissolves a root-level package and unindents its children', () => {
+    const src = `@startuml
+package "G" as g {
+  component "A" as a
+  component "B" as b
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = ungroupPackage(src, doc, 'g');
+    expect(out).toBe(`@startuml
+component "A" as a
+component "B" as b
+@enduml
+`);
+    parseOk(out);
+  });
+
+  it('dissolves a nested package and preserves outer indentation', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package "Inner" as inner {
+    component "A" as a
+    component "B" as b
+  }
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = ungroupPackage(src, doc, 'inner');
+    expect(out).toContain('package "Outer" as outer {');
+    expect(out).toContain('  component "A" as a');
+    expect(out).toContain('  component "B" as b');
+    expect(out).not.toContain('package "Inner"');
+    parseOk(out);
+  });
+});
+
+describe('deleteGroup', () => {
+  it('removes the package and cascades to outside connections + flows', () => {
+    const src = `@startuml
+component "Other" as other
+
+package "G" as g {
+  component "A" as a
+  component "B" as b
+}
+
+other -> a as oa : ping
+a -> b as ab
+
+@flow trigger on oa
+  every: 1s
+
+@flow inside on ab
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = deleteGroup(src, doc, 'g');
+    expect(out).toContain('component "Other" as other');
+    // Wrapper + inner content gone.
+    expect(out).not.toContain('package "G"');
+    expect(out).not.toContain('component "A" as a');
+    expect(out).not.toContain('component "B" as b');
+    expect(out).not.toContain('a -> b as ab');
+    // Outside connection referencing 'a' removed.
+    expect(out).not.toContain('other -> a as oa');
+    expect(out).not.toContain('@flow trigger on oa');
+    expect(out).not.toContain('@flow inside on ab');
+    parseOk(out);
   });
 });
 

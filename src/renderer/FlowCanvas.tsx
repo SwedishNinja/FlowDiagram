@@ -19,6 +19,7 @@ import {
   deleteComponent,
   deleteConnection,
   deleteFlow,
+  deleteGroup,
   generateUniqueComponentId,
   renameComponent,
   updateConnection,
@@ -1128,6 +1129,7 @@ export default function FlowCanvas() {
         if (selectionKind === 'component') updated = deleteComponent(updated, currentDoc, id);
         else if (selectionKind === 'connection') updated = deleteConnection(updated, currentDoc, id);
         else if (selectionKind === 'flow') updated = deleteFlow(updated, currentDoc, id);
+        else if (selectionKind === 'group') updated = deleteGroup(updated, currentDoc, id);
         if (selectedIds.length > 1) {
           const r = parse(updated);
           currentDoc = r.ok ? r.document : null;

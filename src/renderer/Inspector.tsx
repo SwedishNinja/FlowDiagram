@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
+  deleteGroup,
   renameComponent,
   renameConnection,
   renameFlow,
+  ungroupPackage,
   updateComponent,
   updateConnection,
   updateFlow,
@@ -209,11 +211,26 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
 }
 
 function GroupInspector({ group }: { group: GroupNode }) {
+  const clearSelection = useFlowStore((s) => s.clearSelection);
   const commit = (updates: Parameters<typeof updateGroup>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateGroup(sourceText, ast, group.id, updates);
     if (next !== sourceText) setSourceText(next);
+  };
+  const ungroup = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = ungroupPackage(sourceText, ast, group.id);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
+  };
+  const cascadeDelete = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteGroup(sourceText, ast, group.id);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
   };
   return (
     <>
@@ -234,6 +251,30 @@ function GroupInspector({ group }: { group: GroupNode }) {
           onCommit={(v) => commit({ collapseAtPx: v })}
         />
       </FieldRow>
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" onClick={ungroup} style={{
+          font: '11px inherit',
+          background: 'transparent',
+          border: '1px solid #cbd5e1',
+          borderRadius: 4,
+          padding: '6px 10px',
+          cursor: 'pointer',
+          color: '#475569',
+        }}>
+          Ungroup
+        </button>
+        <button type="button" onClick={cascadeDelete} style={{
+          font: '11px inherit',
+          background: 'transparent',
+          border: '1px solid #fca5a5',
+          borderRadius: 4,
+          padding: '6px 10px',
+          cursor: 'pointer',
+          color: '#b91c1c',
+        }}>
+          Delete with contents
+        </button>
+      </div>
     </>
   );
 }

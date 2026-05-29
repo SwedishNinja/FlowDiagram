@@ -445,6 +445,105 @@ export function updateComponent(
 }
 
 /**
+ * Dissolve a package: remove the wrapper and unindent the body by 2 spaces
+ * (relative to the package's own indent). Children survive at the parent
+ * level. The closing `}` and surrounding whitespace are consumed.
+ *
+ * Returns the source unchanged if the package can't be located.
+ */
+export function ungroupPackage(text: string, doc: FlowDocument, id: string): string {
+  const group = doc.groups.find((g) => g.id === id);
+  if (!group?.loc) return text;
+
+  const braceOpen = text.indexOf('{', group.loc.start);
+  const braceClose = text.lastIndexOf('}', group.loc.end - 1);
+  if (braceOpen === -1 || braceClose === -1 || braceClose < braceOpen) return text;
+
+  // Capture the package's own indent (whitespace before "package").
+  let indentEnd = group.loc.start;
+  while (indentEnd < text.length && (text[indentEnd] === ' ' || text[indentEnd] === '\t')) {
+    indentEnd++;
+  }
+  const headerIndent = text.slice(group.loc.start, indentEnd);
+
+  // Body content is between the newline after `{` and the newline before `}`.
+  const bodyStart = text.indexOf('\n', braceOpen) + 1;
+  // `lastIndexOf('\n', braceClose - 1)` finds the newline that ends the line
+  // before `}`. `+1` excludes that newline from the slice; we re-add a
+  // trailing newline below to keep the block well-formed.
+  const newlineBeforeClose = text.lastIndexOf('\n', braceClose - 1);
+  if (bodyStart === 0 || newlineBeforeClose === -1 || newlineBeforeClose < bodyStart) {
+    // Empty body — just drop the wrapper.
+    return text.slice(0, group.loc.start) + text.slice(group.loc.end);
+  }
+  const body = text.slice(bodyStart, newlineBeforeClose + 1);
+
+  // Unindent: drop the extra 2-space layer relative to header indent.
+  const extra = headerIndent + '  ';
+  const unindented = body
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith(extra)) return headerIndent + line.slice(extra.length);
+      if (line.startsWith('  ')) return line.slice(2);
+      return line;
+    })
+    .join('\n');
+
+  return text.slice(0, group.loc.start) + unindented + text.slice(group.loc.end);
+}
+
+/**
+ * Cascade-delete a package: removes its entire source range AND any
+ * outside-the-package connections referencing components inside the group,
+ * plus flows on those connections. Inner connections/flows are removed
+ * along with the package range.
+ */
+export function deleteGroup(text: string, doc: FlowDocument, id: string): string {
+  const group = doc.groups.find((g) => g.id === id);
+  if (!group?.loc) return text;
+
+  // Walk the subtree to gather all contained component IDs.
+  const componentIds = new Set<string>();
+  const visit = (gid: string) => {
+    const g = doc.groups.find((x) => x.id === gid);
+    if (!g) return;
+    for (const child of g.children) {
+      if (doc.components.some((c) => c.id === child)) {
+        componentIds.add(child);
+      } else if (doc.groups.some((sub) => sub.id === child)) {
+        visit(child);
+      }
+    }
+  };
+  visit(id);
+
+  // Identify connections that touch any of those components.
+  const affectedConnIds = new Set<string>();
+  for (const conn of doc.connections) {
+    if (componentIds.has(conn.source) || componentIds.has(conn.target)) {
+      affectedConnIds.add(conn.id);
+    }
+  }
+
+  const edits: Edit[] = [deleteEdit(text, group.loc)];
+
+  // Drop connections declared OUTSIDE the package; inside ones are removed
+  // with the package range itself.
+  for (const conn of doc.connections) {
+    if (!affectedConnIds.has(conn.id) || !conn.loc) continue;
+    if (conn.loc.start >= group.loc.start && conn.loc.end <= group.loc.end) continue;
+    edits.push(deleteEdit(text, conn.loc));
+  }
+  for (const flow of doc.flows) {
+    if (!affectedConnIds.has(flow.connection) || !flow.loc) continue;
+    if (flow.loc.start >= group.loc.start && flow.loc.end <= group.loc.end) continue;
+    edits.push(deleteEdit(text, flow.loc));
+  }
+
+  return applyEdits(text, edits);
+}
+
+/**
  * Update a package: displayName, color, or collapseAtPx. The package
  * declaration's header (`package "X" as p [#color] {`) is re-serialized in
  * place. collapseAtPx is patched separately by replacing/inserting/removing
