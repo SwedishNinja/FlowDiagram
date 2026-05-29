@@ -19,21 +19,37 @@ export function drawParticles(
   edgeLookup: EdgeLookup,
   zc: number = 1,
 ) {
-  const labeledFlows = new Set<string>();
   const particleRadius = PARTICLE_RADIUS * zc;
   const glowRadius = PARTICLE_GLOW_RADIUS * zc;
   const fontSize = PARTICLE_LABEL_FONT * zc;
   const labelPad = PARTICLE_LABEL_PAD_H * zc;
   const labelH = PARTICLE_LABEL_HEIGHT * zc;
 
-  // Trailing (most recently spawned) particle of each flow gets the data
-  // label. Forward = lowest progress first, reverse = highest first.
-  const sorted = [...particleSystem.particles].sort((a, b) => {
-    if (a.reverse !== b.reverse) return a.reverse ? 1 : -1;
-    return a.reverse ? b.progress - a.progress : a.progress - b.progress;
-  });
+  // Resolve which particle carries the data label for each present flow.
+  // The label sticks to its holder until that particle is no longer alive;
+  // only then does it hop to the most recently spawned particle for the
+  // flow. Ids are monotonic, so "newest" = highest id among live particles.
+  const liveByFlow = new Map<string, typeof particleSystem.particles>();
+  for (const p of particleSystem.particles) {
+    const arr = liveByFlow.get(p.flowName) ?? [];
+    arr.push(p);
+    liveByFlow.set(p.flowName, arr);
+  }
+  const holders = particleSystem.labelHolderIdByFlow;
+  for (const [flowName, list] of liveByFlow) {
+    const holderId = holders.get(flowName);
+    const stillAlive = holderId !== undefined && list.some((p) => p.id === holderId);
+    if (!stillAlive) {
+      const newest = list.reduce((a, b) => (a.id > b.id ? a : b));
+      holders.set(flowName, newest.id);
+    }
+  }
+  // Forget label holders for flows that have no live particles anymore.
+  for (const flowName of [...holders.keys()]) {
+    if (!liveByFlow.has(flowName)) holders.delete(flowName);
+  }
 
-  for (const particle of sorted) {
+  for (const particle of particleSystem.particles) {
     const eff = edgeLookup(particle.edgeId);
     if (!eff || eff.suppressed || eff.points.length < 2) continue;
 
@@ -56,8 +72,7 @@ export function drawParticles(
     ctx.fillStyle = '#ffffff';
     ctx.fill();
 
-    if (particle.dataLabel && !labeledFlows.has(particle.flowName)) {
-      labeledFlows.add(particle.flowName);
+    if (particle.dataLabel && holders.get(particle.flowName) === particle.id) {
       ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
       const metrics = ctx.measureText(particle.dataLabel);
       const labelW = metrics.width + labelPad;

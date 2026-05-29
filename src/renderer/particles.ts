@@ -3,6 +3,9 @@ import { pointAtProgress } from './pathUtils';
 import { normalizeColor } from './colorUtils';
 
 export interface Particle {
+  /** Monotonic id assigned on spawn. Used by the renderer to keep the data
+   *  label anchored to a specific particle across frames. */
+  id: number;
   progress: number;     // 0..1 along the edge path
   speed: number;        // progress units per millisecond (negative for reverse)
   edgeId: string;       // connection ID
@@ -59,6 +62,11 @@ export class ParticleSystem {
   particles: Particle[] = [];
   emitters: FlowEmitter[] = [];
 
+  /** Per-flow id of the particle currently carrying the data label. The
+   *  renderer reads this and only repicks (latest spawn) when the prior
+   *  holder is no longer alive. Public so drawParticles can mutate it. */
+  labelHolderIdByFlow = new Map<string, number>();
+
   /** Global arrival counts per flow name, cumulative since init. Used by flow `after:` deps. */
   private arrivalCounts = new Map<string, number>();
 
@@ -67,6 +75,9 @@ export class ParticleSystem {
 
   /** Maximum concurrent particles to avoid performance issues */
   private maxParticles = 500;
+
+  /** Monotonic counter for particle ids. */
+  private nextParticleId = 0;
 
   init(doc: FlowDocument, layout: LayoutResult) {
     this.particles = [];
@@ -129,6 +140,7 @@ export class ParticleSystem {
 
     const isReverse = emitter.flow.direction === 'reverse';
     this.particles.push({
+      id: this.nextParticleId++,
       progress: isReverse ? 1 : 0,
       speed: isReverse ? -emitter.speed : emitter.speed,
       edgeId: emitter.edge.id,
@@ -337,6 +349,8 @@ export class ParticleSystem {
   reset() {
     this.particles = [];
     this.arrivalCounts.clear();
+    this.labelHolderIdByFlow.clear();
+    this.nextParticleId = 0;
 
     // Reset stages to their initial states.
     for (const stage of this.stageStates.values()) {
