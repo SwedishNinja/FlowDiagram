@@ -1,7 +1,7 @@
 import { useRef, useEffect } from 'react';
 import { EditorState, StateEffect, StateField } from '@codemirror/state';
 import { EditorView, Decoration, type DecorationSet, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { flowdiagramLanguageSupport } from './language/flowdiagramLanguage';
@@ -119,6 +119,7 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
         flowdiagramLanguageSupport(),
         keymap.of([
+          indentWithTab,
           ...defaultKeymap,
           ...historyKeymap,
           ...searchKeymap,
