@@ -12,6 +12,7 @@ import {
   generateUniqueFlowName,
   generateUniqueGroupId,
   renameComponent,
+  renameFlow,
   updateComponent,
   updateConnection,
   updateFlow,
@@ -580,6 +581,94 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('renameFlow', () => {
+  it('renames the flow declaration', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow oldName on ab
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameFlow(src, doc, 'oldName', 'newName');
+    expect(out).toContain('@flow newName on ab');
+    expect(out).not.toContain('@flow oldName');
+    parseOk(out);
+  });
+
+  it('updates after: references in other flows', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  every: 1s
+
+@flow audit on ab
+  after: login
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameFlow(src, doc, 'login', 'signin');
+    expect(out).toContain('@flow signin on ab');
+    expect(out).toContain('after: signin');
+    expect(out).not.toContain('after: login');
+    parseOk(out);
+  });
+
+  it('does not match substrings inside other identifiers', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  every: 1s
+
+@flow loginAlt on ab
+  after: login
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameFlow(src, doc, 'login', 'signin');
+    expect(out).toContain('@flow signin on ab');
+    expect(out).toContain('@flow loginAlt on ab');
+    expect(out).toContain('after: signin');
+    parseOk(out);
+  });
+
+  it('leaves stage-level after: lists untouched', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow login on ab
+    every: 1s
+@end_stage
+
+@stage main
+  after: warmup
+  @flow audit on ab
+    after: login
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameFlow(src, doc, 'login', 'signin');
+    expect(out).toContain('@flow signin on ab');
+    expect(out).toContain('after: signin');
+    // Stage `main` still depends on stage `warmup`.
+    expect(out).toContain('after: warmup');
+    parseOk(out);
   });
 });
 

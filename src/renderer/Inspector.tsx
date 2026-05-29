@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
+  renameFlow,
   updateComponent,
   updateConnection,
   updateFlow,
@@ -253,6 +254,27 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
     if (next !== sourceText) setSourceText(next);
   };
 
+  const commitRename = (rawNew: string) => {
+    const newName = rawNew.trim();
+    if (newName === flow.name) return;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newName)) return;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const taken = new Set<string>([
+      ...ast.components.map((c) => c.id),
+      ...ast.groups.map((g) => g.id),
+      ...ast.connections.map((c) => c.id),
+      ...ast.flows.map((f) => f.name),
+    ]);
+    taken.delete(flow.name);
+    if (taken.has(newName)) return;
+    const next = renameFlow(sourceText, ast, flow.name, newName);
+    if (next !== sourceText) {
+      setSourceText(next);
+      setSelection(newName, 'flow');
+    }
+  };
+
   return (
     <>
       <Header label="Flow" id={flow.name} />
@@ -266,6 +288,13 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
           {flow.connection}
         </button>
       </div>
+      <FieldRow label="Name">
+        <CommitTextInput
+          initial={flow.name}
+          placeholder="flow identifier"
+          onCommit={commitRename}
+        />
+      </FieldRow>
       <FieldRow label="Data label">
         <CommitTextInput
           initial={flow.data ?? ''}

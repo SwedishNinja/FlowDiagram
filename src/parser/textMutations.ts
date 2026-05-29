@@ -624,6 +624,52 @@ export function updateFlow(
 }
 
 /**
+ * Rename a flow everywhere: its declaration header + word-boundary
+ * references inside any other flow's `after:` list. Stage-level after:
+ * lines reference stage names (not flow names), so they're untouched.
+ */
+export function renameFlow(
+  text: string,
+  doc: FlowDocument,
+  oldName: string,
+  newName: string,
+): string {
+  if (oldName === newName) return text;
+  const target = doc.flows.find((f) => f.name === oldName);
+  if (!target?.loc) return text;
+
+  const edits: Edit[] = [];
+
+  // 1. The target flow's own header: `@flow oldName on …`.
+  {
+    const slice = text.slice(target.loc.start, target.loc.end);
+    const m = slice.match(new RegExp(`(@flow\\s+)${oldName}\\b`));
+    if (m && m.index !== undefined) {
+      const idStart = target.loc.start + m.index + m[1]!.length;
+      edits.push({ start: idStart, end: idStart + oldName.length, replacement: newName });
+    }
+  }
+
+  // 2. Every OTHER flow whose `after:` references the old name.
+  for (const other of doc.flows) {
+    if (other.name === oldName || !other.loc) continue;
+    if (!other.after.includes(oldName)) continue;
+    const slice = text.slice(other.loc.start, other.loc.end);
+    const lineRe = /^([ \t]*after:[ \t]*)([^\n]+)$/m;
+    const lineMatch = slice.match(lineRe);
+    if (!lineMatch || lineMatch.index === undefined) continue;
+    const valueStart = other.loc.start + lineMatch.index + lineMatch[1]!.length;
+    const oldValue = lineMatch[2]!;
+    const newValue = oldValue.replace(new RegExp(`\\b${oldName}\\b`, 'g'), newName);
+    if (newValue !== oldValue) {
+      edits.push({ start: valueStart, end: valueStart + oldValue.length, replacement: newValue });
+    }
+  }
+
+  return applyEdits(text, edits);
+}
+
+/**
  * Rename a component everywhere: its declaration alias + any connection
  * source/target reference. Flows reference connection IDs, not component
  * IDs, so they aren't touched here.
