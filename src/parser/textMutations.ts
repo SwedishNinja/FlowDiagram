@@ -302,47 +302,88 @@ export function createFlow(
 export function createComponent(
   text: string,
   doc: FlowDocument,
-  opts: { id: string; displayName: string; position?: { x: number; y: number } },
+  opts: {
+    id: string;
+    displayName: string;
+    position?: { x: number; y: number };
+    /** When set, insert the new component inside this package's body (just
+     *  before its closing brace) instead of at the document's top level. */
+    parentGroupId?: string;
+  },
 ): string {
   const line = `component "${opts.displayName}" as ${opts.id}`;
 
-  let anchorEnd = -1;
-  let needsBlankLine = false;
-
-  for (const c of doc.components) {
-    if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
-  }
-
-  if (anchorEnd === -1) {
-    for (const conn of doc.connections) {
-      if (conn.loc && conn.loc.end > anchorEnd) anchorEnd = conn.loc.end;
-    }
-    if (anchorEnd !== -1) needsBlankLine = true;
-  }
-
   let withComponent: string;
-  if (anchorEnd === -1) {
-    const positionsIdx = text.indexOf('@positions');
-    const endumlIdx = text.indexOf('@enduml');
-    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
-    if (candidates.length === 0) {
-      withComponent = text + (text.endsWith('\n') ? '' : '\n') + line + '\n';
+  const parentGroup = opts.parentGroupId
+    ? doc.groups.find((g) => g.id === opts.parentGroupId)
+    : undefined;
+
+  if (parentGroup?.loc) {
+    // Insert inside the parent package, right before its closing `}` line,
+    // with the package's body indent (header indent + 2 spaces).
+    let indentEnd = parentGroup.loc.start;
+    while (
+      indentEnd < text.length &&
+      (text[indentEnd] === ' ' || text[indentEnd] === '\t')
+    ) {
+      indentEnd++;
+    }
+    const headerIndent = text.slice(parentGroup.loc.start, indentEnd);
+    const bodyIndent = headerIndent + '  ';
+    const braceClose = text.lastIndexOf('}', parentGroup.loc.end - 1);
+    if (braceClose !== -1) {
+      // Locate the start of the line that holds `}` so we insert as the new
+      // last child rather than splitting that line.
+      let braceLineStart = braceClose;
+      while (braceLineStart > 0 && text[braceLineStart - 1] !== '\n') {
+        braceLineStart--;
+      }
+      const insertion = `${bodyIndent}${line}\n`;
+      withComponent =
+        text.slice(0, braceLineStart) + insertion + text.slice(braceLineStart);
     } else {
-      const before = Math.min(...candidates);
-      withComponent = text.slice(0, before) + line + '\n\n' + text.slice(before);
+      // Malformed package (no closing brace in loc range) — fall back to
+      // the top-level append path below.
+      withComponent = text;
     }
   } else {
-    let pos = anchorEnd;
-    if (text[pos - 1] !== '\n') {
-      if (text[pos] === '\r') pos++;
-      if (text[pos] === '\n') pos++;
+    let anchorEnd = -1;
+    let needsBlankLine = false;
+
+    for (const c of doc.components) {
+      if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
     }
-    const leading = needsBlankLine ? '\n' : '';
-    const insertion =
-      pos === anchorEnd && text[pos - 1] !== '\n'
-        ? '\n' + line + '\n'
-        : leading + line + '\n';
-    withComponent = text.slice(0, pos) + insertion + text.slice(pos);
+
+    if (anchorEnd === -1) {
+      for (const conn of doc.connections) {
+        if (conn.loc && conn.loc.end > anchorEnd) anchorEnd = conn.loc.end;
+      }
+      if (anchorEnd !== -1) needsBlankLine = true;
+    }
+
+    if (anchorEnd === -1) {
+      const positionsIdx = text.indexOf('@positions');
+      const endumlIdx = text.indexOf('@enduml');
+      const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+      if (candidates.length === 0) {
+        withComponent = text + (text.endsWith('\n') ? '' : '\n') + line + '\n';
+      } else {
+        const before = Math.min(...candidates);
+        withComponent = text.slice(0, before) + line + '\n\n' + text.slice(before);
+      }
+    } else {
+      let pos = anchorEnd;
+      if (text[pos - 1] !== '\n') {
+        if (text[pos] === '\r') pos++;
+        if (text[pos] === '\n') pos++;
+      }
+      const leading = needsBlankLine ? '\n' : '';
+      const insertion =
+        pos === anchorEnd && text[pos - 1] !== '\n'
+          ? '\n' + line + '\n'
+          : leading + line + '\n';
+      withComponent = text.slice(0, pos) + insertion + text.slice(pos);
+    }
   }
 
   if (!opts.position) return withComponent;

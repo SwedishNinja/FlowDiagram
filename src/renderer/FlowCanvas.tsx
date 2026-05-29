@@ -125,6 +125,32 @@ function hitTestFrame(
   return null;
 }
 
+/** Find the deepest-nested package whose bounding box contains (x, y) in
+ *  diagram coords. Returns undefined if the point sits outside every group. */
+function findInnermostContainingGroup(
+  layout: import('../types').LayoutResult,
+  x: number,
+  y: number,
+): string | undefined {
+  const candidates = layout.groups.filter(
+    (g) => x >= g.x && x <= g.x + g.width && y >= g.y && y <= g.y + g.height,
+  );
+  if (candidates.length === 0) return undefined;
+  const parentOf = new Map<string, string | undefined>();
+  for (const g of layout.groups) parentOf.set(g.id, g.parentGroup);
+  const depthOf = (id: string): number => {
+    let d = 0;
+    let cursor = parentOf.get(id);
+    while (cursor !== undefined) {
+      d++;
+      cursor = parentOf.get(cursor);
+    }
+    return d;
+  };
+  candidates.sort((a, b) => depthOf(b.id) - depthOf(a.id));
+  return candidates[0]!.id;
+}
+
 /** Shortest distance from (px, py) to the segment (ax, ay)–(bx, by). Used
  *  for the edge polyline hit-test. */
 function distancePointToSegment(
@@ -522,19 +548,24 @@ export default function FlowCanvas() {
       if (coords && t) {
         const scale = t.transform.scale;
         const onNode = !!findNodeAt(coords.x, coords.y, scale);
-        const onToggle = !!findToggleAt(coords.x, coords.y, scale);
-        const onGroup = !!findGroupHandleAt(coords.x, coords.y, scale);
         const fc = getFrameInCanvas();
         const onFrame = fc ? !!hitTestFrame(cx, cy, fc) : false;
-        if (!onNode && !onToggle && !onGroup && !onFrame) {
+        if (!onNode && !onFrame) {
           const ast = useFlowStore.getState().ast;
           const sourceText = useFlowStore.getState().sourceText;
+          const currentLayout = useFlowStore.getState().layout;
           if (!ast) return;
           const id = generateUniqueComponentId(ast);
+          // If the click sits inside any package, drop the new component
+          // into the innermost containing one.
+          const parentGroupId = currentLayout
+            ? findInnermostContainingGroup(currentLayout, coords.x, coords.y)
+            : undefined;
           const updated = createComponent(sourceText, ast, {
             id,
             displayName: id,
             position: { x: coords.x, y: coords.y },
+            parentGroupId,
           });
           if (updated !== sourceText) {
             useFlowStore.getState().setSourceText(updated);

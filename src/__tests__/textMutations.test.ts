@@ -229,6 +229,50 @@ component "A" as a
     expect(newDoc.positions.b).toEqual({ x: 300, y: 200 });
   });
 
+  it('inserts inside a package when parentGroupId is supplied', () => {
+    const src = `@startuml
+component "Outside" as outside
+
+package "Group" as g {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createComponent(src, doc, {
+      id: 'b',
+      displayName: 'B',
+      parentGroupId: 'g',
+    });
+    // New component lands inside the package, just before the closing brace,
+    // with the same indent as the existing child.
+    expect(out).toMatch(/package "Group" as g \{\n\s+component "A" as a\n\s+component "B" as b\n\}/);
+    expect(out).toContain('component "Outside" as outside');
+    const out2 = parseOk(out);
+    const group = out2.groups.find((g) => g.id === 'g')!;
+    expect(group.children).toEqual(['a', 'b']);
+  });
+
+  it('inserts into a nested package with the right indent depth', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package "Inner" as inner {
+    component "A" as a
+  }
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createComponent(src, doc, {
+      id: 'b',
+      displayName: 'B',
+      parentGroupId: 'inner',
+    });
+    // 4-space indent inside the nested package.
+    expect(out).toMatch(/    component "A" as a\n    component "B" as b\n  \}/);
+    parseOk(out);
+  });
+
   it('appends after connections (with blank line) when no components exist with loc info', () => {
     const src = `@startuml
 @enduml

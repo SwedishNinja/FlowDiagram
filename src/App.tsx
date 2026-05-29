@@ -378,7 +378,11 @@ function ExportPanel({
   onCloseRef.current = onClose;
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onCloseRef.current();
+      // Treat the panel's wrapper as "inside" so the toggle button (a sibling)
+      // doesn't fire close-on-mousedown right before its own click reopens
+      // the panel. Outside-click only fires for clicks truly outside both.
+      const boundary = panelRef.current?.parentElement;
+      if (boundary && !boundary.contains(e.target as Node)) onCloseRef.current();
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
     // Delay by one tick so the click that opened the panel doesn't immediately close it.
