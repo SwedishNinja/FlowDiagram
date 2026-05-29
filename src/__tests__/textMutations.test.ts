@@ -12,6 +12,7 @@ import {
   generateUniqueFlowName,
   generateUniqueGroupId,
   renameComponent,
+  renameConnection,
   renameFlow,
   updateComponent,
   updateConnection,
@@ -581,6 +582,80 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('renameConnection', () => {
+  it('renames a user-named connection and preserves its label', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab : do the thing
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameConnection(src, doc, 'ab', 'renamed');
+    expect(out).toContain('a -> b as renamed : do the thing');
+    expect(out).not.toContain('a -> b as ab');
+    parseOk(out);
+  });
+
+  it('cascades the rename to flows that reference the connection', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  every: 1s
+
+@flow audit on ab
+  data: "log"
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameConnection(src, doc, 'ab', 'authConn');
+    expect(out).toContain('a -> b as authConn');
+    expect(out).toContain('@flow login on authConn');
+    expect(out).toContain('@flow audit on authConn');
+    expect(out).not.toContain('on ab');
+    parseOk(out);
+  });
+
+  it('injects `as <newId>` for an auto-id connection', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b
+@enduml
+`;
+    const doc = parseOk(src);
+    const autoId = doc.connections[0]!.id; // _conn_0
+    const out = renameConnection(src, doc, autoId, 'ab');
+    expect(out).toContain('a -> b as ab');
+    parseOk(out);
+  });
+
+  it('does not match substrings inside other identifiers', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow login on ab
+  every: 1s
+
+@flow audit on ab
+  data: "ab is a substring of abracadabra"
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameConnection(src, doc, 'ab', 'authConn');
+    expect(out).toContain('@flow login on authConn');
+    expect(out).toContain('@flow audit on authConn');
+    // The data string is verbatim — it had "ab" as a word but isn't a code ref.
+    expect(out).toContain('"ab is a substring of abracadabra"');
+    parseOk(out);
   });
 });
 

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
+  renameComponent,
+  renameConnection,
   renameFlow,
   updateComponent,
   updateConnection,
@@ -63,15 +65,43 @@ export default function Inspector() {
 }
 
 function ComponentInspector({ comp }: { comp: ComponentNode }) {
+  const setSelection = useFlowStore((s) => s.setSelection);
   const commit = (updates: Parameters<typeof updateComponent>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateComponent(sourceText, ast, comp.id, updates);
     if (next !== sourceText) setSourceText(next);
   };
+  const commitRename = (raw: string) => {
+    const newId = raw.trim();
+    if (newId === comp.id) return;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const taken = new Set<string>([
+      ...ast.components.map((c) => c.id),
+      ...ast.groups.map((g) => g.id),
+      ...ast.connections.map((c) => c.id),
+      ...ast.flows.map((f) => f.name),
+    ]);
+    taken.delete(comp.id);
+    if (taken.has(newId)) return;
+    const next = renameComponent(sourceText, ast, comp.id, newId);
+    if (next !== sourceText) {
+      setSourceText(next);
+      setSelection(newId, 'component');
+    }
+  };
   return (
     <>
       <Header label="Component" id={comp.id} />
+      <FieldRow label="Name">
+        <CommitTextInput
+          initial={comp.id}
+          placeholder="alias"
+          onCommit={commitRename}
+        />
+      </FieldRow>
       <FieldRow label="Display name">
         <CommitTextInput
           initial={comp.displayName}
@@ -104,12 +134,41 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
     if (next !== sourceText) setSourceText(next);
   };
 
+  const commitRename = (raw: string) => {
+    const newId = raw.trim();
+    if (newId === conn.id) return;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const taken = new Set<string>([
+      ...ast.components.map((c) => c.id),
+      ...ast.groups.map((g) => g.id),
+      ...ast.connections.map((c) => c.id),
+      ...ast.flows.map((f) => f.name),
+    ]);
+    taken.delete(conn.id);
+    if (taken.has(newId)) return;
+    const next = renameConnection(sourceText, ast, conn.id, newId);
+    if (next !== sourceText) {
+      setSourceText(next);
+      setSelection(newId, 'connection');
+    }
+  };
+
   const arrowKey = arrowKeyFor(conn.lineStyle, conn.arrowStyle);
   const flowsOnThis = flows.filter((f) => f.connection === conn.id);
+  const isAutoId = conn.id.startsWith('_conn_');
 
   return (
     <>
       <Header label="Connection" id={`${conn.source} → ${conn.target}`} />
+      <FieldRow label="Name">
+        <CommitTextInput
+          initial={isAutoId ? '' : conn.id}
+          placeholder={isAutoId ? 'unnamed — add an alias' : 'alias'}
+          onCommit={commitRename}
+        />
+      </FieldRow>
       <FieldRow label="Label">
         <CommitTextInput
           initial={conn.label ?? ''}

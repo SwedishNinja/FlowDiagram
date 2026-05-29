@@ -624,6 +624,51 @@ export function updateFlow(
 }
 
 /**
+ * Rename a connection: replace its `as <id>` clause and update every flow's
+ * `on <id>` reference. For previously auto-id connections (`_conn_N`, no
+ * source `as` clause) this inserts a fresh `as <newId>` between the target
+ * and any optional label. Flows on auto-id connections are rare (the parser
+ * generates the id, so source can't reference it), but a defensive scan is
+ * still included.
+ */
+export function renameConnection(
+  text: string,
+  doc: FlowDocument,
+  oldId: string,
+  newId: string,
+): string {
+  if (oldId === newId) return text;
+  const conn = doc.connections.find((c) => c.id === oldId);
+  if (!conn?.loc) return text;
+
+  const edits: Edit[] = [];
+
+  // Re-serialize the connection line with the new id. Arrow + label come
+  // from the parsed AST so we don't have to scrape them out of source.
+  let arrow: string;
+  if (conn.lineStyle === 'dotted') arrow = '..>';
+  else if (conn.arrowStyle === 'bidirectional') arrow = '<->';
+  else if (conn.arrowStyle === 'long') arrow = '-->';
+  else arrow = '->';
+  let line = `${conn.source} ${arrow} ${conn.target} as ${newId}`;
+  if (conn.label) line += ` : ${conn.label}`;
+  edits.push({ start: conn.loc.start, end: conn.loc.end, replacement: line });
+
+  // Update every flow that references this connection.
+  for (const flow of doc.flows) {
+    if (flow.connection !== oldId || !flow.loc) continue;
+    const slice = text.slice(flow.loc.start, flow.loc.end);
+    const m = slice.match(new RegExp(`(@flow\\s+\\S+\\s+on\\s+)${oldId}\\b`));
+    if (m && m.index !== undefined) {
+      const idStart = flow.loc.start + m.index + m[1]!.length;
+      edits.push({ start: idStart, end: idStart + oldId.length, replacement: newId });
+    }
+  }
+
+  return applyEdits(text, edits);
+}
+
+/**
  * Rename a flow everywhere: its declaration header + word-boundary
  * references inside any other flow's `after:` list. Stage-level after:
  * lines reference stage names (not flow names), so they're untouched.
