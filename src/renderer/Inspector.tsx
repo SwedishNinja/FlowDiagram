@@ -5,6 +5,7 @@ import {
   deleteConnection,
   deleteFlow,
   deleteGroup,
+  moveComponent,
   renameComponent,
   renameConnection,
   renameFlow,
@@ -137,12 +138,47 @@ function ComponentInspector({ comp }: { comp: ComponentNode }) {
           onCommit={(v) => commit({ stereotype: v.trim() === '' ? null : v.trim() })}
         />
       </FieldRow>
+      <PackageSelectField comp={comp} />
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
           Delete component
         </button>
       </div>
     </>
+  );
+}
+
+function PackageSelectField({ comp }: { comp: ComponentNode }) {
+  const groups = useFlowStore((s) => s.ast?.groups ?? []);
+  const setSelection = useFlowStore((s) => s.setSelection);
+  const currentValue = comp.parentGroup ?? '';
+  const onChange = (next: string) => {
+    const targetId = next === '' ? null : next;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const updated = moveComponent(sourceText, ast, comp.id, targetId);
+    if (updated !== sourceText) {
+      setSourceText(updated);
+      // Keep this component as the selection so the inspector stays open.
+      setSelection(comp.id, 'component');
+    }
+  };
+  return (
+    <FieldRow label="Package">
+      <select
+        value={currentValue}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={groups.length === 0 && !comp.parentGroup}
+        style={{ ...textInputStyle, padding: '5px 6px' }}
+      >
+        <option value="">(no package)</option>
+        {groups.map((g) => (
+          <option key={g.id} value={g.id}>
+            {g.id}
+          </option>
+        ))}
+      </select>
+    </FieldRow>
   );
 }
 

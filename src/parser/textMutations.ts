@@ -128,6 +128,83 @@ export function generateUniqueGroupId(doc: FlowDocument, prefix: string = 'group
 }
 
 /**
+ * Move an existing component into a different package (or to the document
+ * root when targetGroupId is null). The component's original source slice
+ * is reused verbatim so any custom formatting (e.g. bracket-form alias,
+ * color, stereotype) survives. Connections referencing the component are
+ * left in place — they reference by id, not by source location.
+ *
+ * Returns the source unchanged when:
+ *   • the component already lives in the target,
+ *   • the component has no source loc, or
+ *   • the target package id doesn't resolve to a known group.
+ */
+export function moveComponent(
+  text: string,
+  doc: FlowDocument,
+  componentId: string,
+  targetGroupId: string | null,
+): string {
+  const comp = doc.components.find((c) => c.id === componentId);
+  if (!comp?.loc) return text;
+  const currentParent = comp.parentGroup ?? null;
+  if (currentParent === targetGroupId) return text;
+
+  // Preserve the original declaration verbatim (trimmed of indent).
+  const sourceLine = text.slice(comp.loc.start, comp.loc.end).trim();
+
+  // Phase 1: cut the line + trailing newline.
+  const cutStart = comp.loc.start;
+  const cutEnd = extendToTrailingNewline(text, comp.loc);
+  const cutLen = cutEnd - cutStart;
+  const deleted = text.slice(0, cutStart) + text.slice(cutEnd);
+
+  // Phase 2: insert at the target location, computed on the post-cut text.
+  if (targetGroupId === null) {
+    const positionsIdx = deleted.indexOf('@positions');
+    const endumlIdx = deleted.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      return deleted + (deleted.endsWith('\n') ? '' : '\n') + sourceLine + '\n';
+    }
+    const before = Math.min(...candidates);
+    return deleted.slice(0, before) + sourceLine + '\n' + deleted.slice(before);
+  }
+
+  const targetGroup = doc.groups.find((g) => g.id === targetGroupId);
+  if (!targetGroup?.loc) return text;
+
+  // Adjust target loc for the cut that happened before it.
+  let adjStart = targetGroup.loc.start;
+  let adjEnd = targetGroup.loc.end;
+  if (cutStart < targetGroup.loc.start) {
+    adjStart -= cutLen;
+    adjEnd -= cutLen;
+  }
+
+  // Header indent of the (adjusted) target package.
+  let indentEnd = adjStart;
+  while (
+    indentEnd < deleted.length &&
+    (deleted[indentEnd] === ' ' || deleted[indentEnd] === '\t')
+  ) {
+    indentEnd++;
+  }
+  const headerIndent = deleted.slice(adjStart, indentEnd);
+  const bodyIndent = headerIndent + '  ';
+
+  const braceClose = deleted.lastIndexOf('}', adjEnd - 1);
+  if (braceClose === -1) return text;
+  let braceLineStart = braceClose;
+  while (braceLineStart > 0 && deleted[braceLineStart - 1] !== '\n') {
+    braceLineStart--;
+  }
+
+  const insertion = `${bodyIndent}${sourceLine}\n`;
+  return deleted.slice(0, braceLineStart) + insertion + deleted.slice(braceLineStart);
+}
+
+/**
  * Move the given components into a new `package "<displayName>" as <packageId> { … }`
  * block at the position of the first selected component (in source order).
  * Each component's original line is reused verbatim, indented by 2 spaces.

@@ -4,6 +4,7 @@ import {
   appendConnection,
   createComponent,
   createFlow,
+  moveComponent,
   reorderFlowsInStage,
   deleteComponent,
   deleteConnection,
@@ -635,6 +636,111 @@ a -> b as ab
     const out2 = parseOk(out);
     const newFlow = out2.flows.find((f) => f.name === 'second')!;
     expect(newFlow.stage).toBe('warmup');
+  });
+});
+
+describe('moveComponent', () => {
+  it('moves a root component into a package', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+
+package "G" as g {
+  component "C" as c
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveComponent(src, doc, 'b', 'g');
+    expect(out).toMatch(/package "G" as g \{\n\s+component "C" as c\n\s+component "B" as b\n\}/);
+    // 'b' no longer at root.
+    expect(out).not.toMatch(/^component "B" as b$/m);
+    const out2 = parseOk(out);
+    const group = out2.groups.find((g) => g.id === 'g')!;
+    expect(group.children).toEqual(['c', 'b']);
+  });
+
+  it('moves a packaged component back to the root', () => {
+    const src = `@startuml
+component "A" as a
+
+package "G" as g {
+  component "B" as b
+  component "C" as c
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveComponent(src, doc, 'b', null);
+    // Only c remains inside g.
+    expect(out).toMatch(/package "G" as g \{\n\s+component "C" as c\n\}/);
+    // 'b' moved to root (before @enduml).
+    expect(out.indexOf('component "B" as b')).toBeGreaterThan(out.indexOf('package "G"'));
+    expect(out.indexOf('component "B" as b')).toBeLessThan(out.indexOf('@enduml'));
+    parseOk(out);
+  });
+
+  it('moves a component between packages with correct indent', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package "A" as ga {
+    component "X" as x
+  }
+  package "B" as gb {
+    component "Y" as y
+  }
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveComponent(src, doc, 'x', 'gb');
+    // ga now empty, gb has y and x at nested indent.
+    expect(out).toMatch(/package "A" as ga \{\n\s*\}/);
+    expect(out).toMatch(/package "B" as gb \{\n    component "Y" as y\n    component "X" as x\n  \}/);
+    parseOk(out);
+  });
+
+  it('is a no-op when target equals current parent', () => {
+    const src = `@startuml
+package "G" as g {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(moveComponent(src, doc, 'a', 'g')).toBe(src);
+    const root = parseOk(`@startuml
+component "A" as a
+@enduml
+`);
+    const rootSrc = `@startuml
+component "A" as a
+@enduml
+`;
+    expect(moveComponent(rootSrc, root, 'a', null)).toBe(rootSrc);
+  });
+
+  it('returns the source unchanged when the target package does not exist', () => {
+    const src = `@startuml
+component "A" as a
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(moveComponent(src, doc, 'a', 'ghost')).toBe(src);
+  });
+
+  it('preserves color and stereotype on the moved declaration', () => {
+    const src = `@startuml
+component "Db" as db #ff0000 <<store>>
+
+package "G" as g {
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveComponent(src, doc, 'db', 'g');
+    expect(out).toContain('component "Db" as db #ff0000 <<store>>');
+    parseOk(out);
   });
 });
 
