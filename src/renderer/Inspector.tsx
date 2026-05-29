@@ -1,7 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
-import { updateComponent, updateConnection, updateFlow } from '../parser/textMutations';
-import type { ComponentNode, ConnectionNode, FlowNode } from '../types';
+import {
+  updateComponent,
+  updateConnection,
+  updateFlow,
+  updateGroup,
+} from '../parser/textMutations';
+import type { ComponentNode, ConnectionNode, FlowNode, GroupNode } from '../types';
 
 /**
  * Floating right-side panel that surfaces editable fields for the currently
@@ -28,6 +33,9 @@ export default function Inspector() {
   } else if (selectionKind === 'flow') {
     const flow = ast.flows.find((f) => f.name === selectedId);
     if (flow) body = <FlowInspector flow={flow} />;
+  } else if (selectionKind === 'group') {
+    const group = ast.groups.find((g) => g.id === selectedId);
+    if (group) body = <GroupInspector group={group} />;
   }
   if (!body) return null;
 
@@ -137,6 +145,101 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
         </FieldRow>
       )}
     </>
+  );
+}
+
+function GroupInspector({ group }: { group: GroupNode }) {
+  const commit = (updates: Parameters<typeof updateGroup>[3]) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = updateGroup(sourceText, ast, group.id, updates);
+    if (next !== sourceText) setSourceText(next);
+  };
+  return (
+    <>
+      <Header label="Package" id={group.id} />
+      <FieldRow label="Display name">
+        <CommitTextInput
+          initial={group.displayName}
+          placeholder="Display name"
+          onCommit={(v) => commit({ displayName: v })}
+        />
+      </FieldRow>
+      <FieldRow label="Color">
+        <ColorField value={group.color} onCommit={(v) => commit({ color: v })} />
+      </FieldRow>
+      <FieldRow label="Collapse at (px)">
+        <CollapseAtField
+          initial={group.collapseAtPx}
+          onCommit={(v) => commit({ collapseAtPx: v })}
+        />
+      </FieldRow>
+    </>
+  );
+}
+
+function CollapseAtField({
+  initial,
+  onCommit,
+}: {
+  initial: number | undefined;
+  onCommit: (value: number | null) => void;
+}) {
+  const [value, setValue] = useState(initial === undefined ? '' : String(initial));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setValue(initial === undefined ? '' : String(initial));
+  }, [initial, focused]);
+  const commit = () => {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      if (initial !== undefined) onCommit(null);
+      return;
+    }
+    const n = Number(trimmed);
+    if (!Number.isFinite(n) || n <= 0) {
+      setValue(initial === undefined ? '' : String(initial));
+      return;
+    }
+    if (n !== initial) onCommit(n);
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <input
+        type="number"
+        min={20}
+        value={value}
+        placeholder="(inherit default)"
+        onChange={(e) => setValue(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => { setFocused(false); commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+          else if (e.key === 'Escape') {
+            setValue(initial === undefined ? '' : String(initial));
+            e.currentTarget.blur();
+          }
+        }}
+        style={{ ...textInputStyle, flex: 1 }}
+      />
+      {initial !== undefined && (
+        <button
+          type="button"
+          onClick={() => onCommit(null)}
+          style={{
+            font: '11px inherit',
+            background: 'transparent',
+            border: '1px solid #cbd5e1',
+            borderRadius: 4,
+            padding: '3px 6px',
+            cursor: 'pointer',
+            color: '#475569',
+          }}
+        >
+          Clear
+        </button>
+      )}
+    </div>
   );
 }
 

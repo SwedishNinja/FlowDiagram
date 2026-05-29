@@ -40,7 +40,7 @@ export interface DrawOptions {
    *  selectionKind. The renderer highlights node rings or edge strokes
    *  according to that kind. */
   selectedIds?: ReadonlyArray<string> | null;
-  selectionKind?: 'component' | 'connection' | 'flow' | null;
+  selectionKind?: 'component' | 'connection' | 'flow' | 'group' | null;
   /** ID of the node the pointer is currently hovering over (when not dragging).
    *  Used to surface the connection-create handles. */
   hoveredId?: string | null;
@@ -172,7 +172,7 @@ export function groupToggleRect(
   };
 }
 
-function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed: boolean, zc: number = 1) {
+function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed: boolean, zc: number = 1, selected: boolean = false) {
   ctx.save();
   drawRoundedRect(ctx, group.x, group.y, group.width, group.height, GROUP_RADIUS);
 
@@ -182,15 +182,15 @@ function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed:
     // Collapsed: solid box (custom color if provided).
     ctx.fillStyle = custom ?? COLORS.groupFillCollapsed;
     ctx.fill();
-    ctx.strokeStyle = custom ? darkenColor(custom, 0.25) : COLORS.groupStrokeCollapsed;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = selected ? '#3b82f6' : (custom ? darkenColor(custom, 0.25) : COLORS.groupStrokeCollapsed);
+    ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.stroke();
   } else {
     // Expanded: subtle tinted fill + SOLID colored border.
     ctx.fillStyle = custom ? withAlpha(custom, 0.12) : (COLORS.groupFill + '40');
     ctx.fill();
-    ctx.strokeStyle = custom ?? COLORS.groupStroke;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = selected ? '#3b82f6' : (custom ?? COLORS.groupStroke);
+    ctx.lineWidth = selected ? 2.5 : 1.5;
     ctx.stroke();
   }
 
@@ -647,10 +647,13 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
     const db = depthOf(b.id, parentOf);
     return da - db;
   });
+  const selectedGroupIds = new Set<string>(
+    options.selectionKind === 'group' ? options.selectedIds ?? [] : [],
+  );
   for (const group of groupsByDepth) {
     if (groupIsHidden(group.id, parentOf, collapsedGroups)) continue;
     const collapsed = collapsedGroups.has(group.id);
-    drawGroup(ctx, group, collapsed, zc);
+    drawGroup(ctx, group, collapsed, zc, selectedGroupIds.has(group.id));
   }
 
   // 2. Edges — use effectiveEdges (rerouted + suppression info).

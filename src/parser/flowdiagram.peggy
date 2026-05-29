@@ -48,6 +48,7 @@ Body
         children: childIds,
         parentGroup: parentGroupId,
         collapseAtPx,
+        loc: pkg.loc,
       });
     }
 
@@ -179,6 +180,7 @@ Package
       displayName,
       color: color ? color[2] : undefined,
       entries,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
 

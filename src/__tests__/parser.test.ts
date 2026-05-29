@@ -572,7 +572,7 @@ gw -> auth as login_conn : login
 
       // Group is recorded
       expect(result.document.groups).toHaveLength(1);
-      expect(result.document.groups[0]).toEqual({
+      expect(result.document.groups[0]).toMatchObject({
         id: 'backend',
         displayName: 'Backend',
         children: ['auth', 'db'],

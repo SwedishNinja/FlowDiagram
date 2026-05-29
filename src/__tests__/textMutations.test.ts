@@ -14,6 +14,7 @@ import {
   updateComponent,
   updateConnection,
   updateFlow,
+  updateGroup,
 } from '../parser/textMutations';
 
 function parseOk(src: string) {
@@ -577,6 +578,80 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('updateGroup', () => {
+  it('renames a package and preserves children', () => {
+    const src = `@startuml
+package "Old Name" as p1 {
+  component "A" as a
+  component "B" as b
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateGroup(src, doc, 'p1', { displayName: 'New Name' });
+    expect(out).toContain('package "New Name" as p1');
+    expect(out).toContain('component "A" as a');
+    expect(out).toContain('component "B" as b');
+    parseOk(out);
+  });
+
+  it('adds and clears a color', () => {
+    const src = `@startuml
+package "P" as p1 {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const colored = updateGroup(src, doc, 'p1', { color: 'aabbcc' });
+    expect(colored).toContain('package "P" as p1 #aabbcc {');
+    parseOk(colored);
+    const cleared = updateGroup(colored, parseOk(colored), 'p1', { color: null });
+    expect(cleared).toContain('package "P" as p1 {');
+    expect(cleared).not.toContain('#aabbcc');
+    parseOk(cleared);
+  });
+
+  it('inserts, replaces, and removes collapse_at', () => {
+    const src = `@startuml
+package "P" as p1 {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const withCollapse = updateGroup(src, doc, 'p1', { collapseAtPx: 200 });
+    expect(withCollapse).toMatch(/package "P" as p1 \{\n\s+collapse_at: 200px/);
+    parseOk(withCollapse);
+
+    const replaced = updateGroup(withCollapse, parseOk(withCollapse), 'p1', { collapseAtPx: 350 });
+    expect(replaced).toContain('collapse_at: 350px');
+    expect(replaced).not.toContain('collapse_at: 200px');
+    parseOk(replaced);
+
+    const removed = updateGroup(replaced, parseOk(replaced), 'p1', { collapseAtPx: null });
+    expect(removed).not.toContain('collapse_at');
+    parseOk(removed);
+  });
+
+  it('preserves indentation of a nested package when editing the outer one', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package "Inner" as inner {
+    component "A" as a
+  }
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateGroup(src, doc, 'outer', { displayName: 'Outermost' });
+    expect(out).toContain('package "Outermost" as outer');
+    expect(out).toContain('  package "Inner" as inner');
+    expect(out).toContain('    component "A" as a');
+    parseOk(out);
   });
 });
 

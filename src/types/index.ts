@@ -38,6 +38,8 @@ export interface GroupNode {
   collapseAtPx?: number;
   /** Optional package color (hex without #, or named color). */
   color?: string;
+  /** Byte offsets of the entire `package … { … }` block in source. */
+  loc?: SourceLoc;
 }
 
 /** A named connection between two components */

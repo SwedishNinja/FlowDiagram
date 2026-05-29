@@ -333,6 +333,7 @@ function peg$parse(input, options) {
         children: childIds,
         parentGroup: parentGroupId,
         collapseAtPx,
+        loc: pkg.loc,
       });
     }
 
@@ -418,6 +419,7 @@ function peg$parse(input, options) {
       displayName,
       color: color ? color[2] : undefined,
       entries,
+      loc: { start: location().start.offset, end: location().end.offset },
     };
   }
   function peg$f17(pkg) {    return pkg;  }

@@ -125,7 +125,7 @@ export function createAnimationLoop(
     /** Currently selected entity IDs — paired with selectionKind to decide
      *  whether to highlight nodes or edges. */
     selectedIds?: ReadonlyArray<string> | null;
-    selectionKind?: 'component' | 'connection' | 'flow' | null;
+    selectionKind?: 'component' | 'connection' | 'flow' | 'group' | null;
     /** Node the pointer is currently hovering over (when no drag in progress).
      *  Drives the connection-create handle overlay. */
     hoveredId?: string | null;

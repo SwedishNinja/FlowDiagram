@@ -670,6 +670,7 @@ export default function FlowCanvas() {
     if (t) {
       const group = findGroupHandleAt(coords.x, coords.y, t.transform.scale);
       if (group) {
+        useFlowStore.getState().setSelection(group.id, 'group');
         dragRef.current = {
           kind: 'group',
           groupId: group.id,

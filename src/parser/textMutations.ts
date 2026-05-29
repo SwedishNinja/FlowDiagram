@@ -391,6 +391,84 @@ export function updateComponent(
 }
 
 /**
+ * Update a package: displayName, color, or collapseAtPx. The package
+ * declaration's header (`package "X" as p [#color] {`) is re-serialized in
+ * place. collapseAtPx is patched separately by replacing/inserting/removing
+ * the `collapse_at:` line within the package body. Children and nested
+ * declarations are untouched.
+ */
+export function updateGroup(
+  text: string,
+  doc: FlowDocument,
+  id: string,
+  updates: {
+    displayName?: string;
+    color?: string | null;
+    collapseAtPx?: number | null;
+  },
+): string {
+  const group = doc.groups.find((g) => g.id === id);
+  if (!group?.loc) return text;
+
+  const displayName = updates.displayName ?? group.displayName;
+  const color = 'color' in updates ? updates.color : group.color;
+
+  // Header replacement: from loc.start (start of leading indent) up to and
+  // including the opening `{`.
+  const braceIdx = text.indexOf('{', group.loc.start);
+  if (braceIdx === -1 || braceIdx > group.loc.end) return text;
+
+  let indentEnd = group.loc.start;
+  while (indentEnd < text.length && (text[indentEnd] === ' ' || text[indentEnd] === '\t')) {
+    indentEnd++;
+  }
+  const indent = text.slice(group.loc.start, indentEnd);
+  const colorPart = color ? ` #${color.replace(/^#/, '')}` : '';
+  const newHeader = `${indent}package "${displayName}" as ${id}${colorPart} {`;
+  let next = text.slice(0, group.loc.start) + newHeader + text.slice(braceIdx + 1);
+
+  // collapseAtPx side-effects. Recompute the (possibly shifted) loc by
+  // measuring the new header length vs the old header length.
+  if ('collapseAtPx' in updates) {
+    const shift = newHeader.length - (braceIdx + 1 - group.loc.start);
+    const newGroupStart = group.loc.start;
+    const newGroupEnd = group.loc.end + shift;
+    next = applyCollapseAtPx(next, newGroupStart, newGroupEnd, indent, updates.collapseAtPx ?? null);
+  }
+
+  return next;
+}
+
+/** Replace, insert, or remove the `collapse_at:` line inside a package body. */
+function applyCollapseAtPx(
+  text: string,
+  groupStart: number,
+  groupEnd: number,
+  outerIndent: string,
+  value: number | null,
+): string {
+  const bodyIndent = outerIndent + '  ';
+  // Scan inside the group for the existing collapse_at line.
+  const slice = text.slice(groupStart, groupEnd);
+  const m = slice.match(/^[ \t]*collapse_at:\s*[^\n]*\n/m);
+  if (m && m.index !== undefined) {
+    const lineStart = groupStart + m.index;
+    const lineEnd = lineStart + m[0]!.length;
+    if (value === null) {
+      return text.slice(0, lineStart) + text.slice(lineEnd);
+    }
+    return text.slice(0, lineStart) + `${bodyIndent}collapse_at: ${Math.round(value)}px\n` + text.slice(lineEnd);
+  }
+  if (value === null) return text;
+  // Insert immediately after the opening `{`'s newline.
+  const headerNewline = text.indexOf('\n', groupStart);
+  if (headerNewline === -1 || headerNewline > groupEnd) return text;
+  return text.slice(0, headerNewline + 1)
+    + `${bodyIndent}collapse_at: ${Math.round(value)}px\n`
+    + text.slice(headerNewline + 1);
+}
+
+/**
  * Replace a connection's declaration with a canonical line carrying the
  * supplied field updates. Arrow token derives from the lineStyle +
  * arrowStyle combination per the grammar:
