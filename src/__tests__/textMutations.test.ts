@@ -10,11 +10,13 @@ import {
   findConnectionBetween,
   generateUniqueComponentId,
   generateUniqueFlowName,
+  generateUniqueGroupId,
   renameComponent,
   updateComponent,
   updateConnection,
   updateFlow,
   updateGroup,
+  wrapInPackage,
 } from '../parser/textMutations';
 
 function parseOk(src: string) {
@@ -578,6 +580,76 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('wrapInPackage', () => {
+  it('wraps two components and preserves source order', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = wrapInPackage(src, doc, ['a', 'b'], 'group1', 'Group One');
+    expect(out).toContain('package "Group One" as group1 {');
+    expect(out).toMatch(/package "Group One" as group1 \{\n\s+component "A" as a\n\s+component "B" as b\n\}/);
+    // c is left alone
+    expect(out).toContain('component "C" as c');
+    // connections unchanged
+    expect(out).toContain('a -> b as ab');
+    expect(out).toContain('b -> c as bc');
+    const out2 = parseOk(out);
+    expect(out2.groups.map((g) => g.id)).toContain('group1');
+    const g = out2.groups.find((g) => g.id === 'group1')!;
+    expect(g.children).toEqual(['a', 'b']);
+  });
+
+  it('preserves source order even if ids are passed in reverse', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = wrapInPackage(src, doc, ['c', 'a', 'b'], 'g', 'G');
+    expect(out).toMatch(/package "G" as g \{\n\s+component "A" as a\n\s+component "B" as b\n\s+component "C" as c\n\}/);
+    parseOk(out);
+  });
+
+  it('nests when selecting a component already inside a package', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  component "A" as a
+  component "B" as b
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = wrapInPackage(src, doc, ['a'], 'inner', 'Inner');
+    expect(out).toContain('package "Inner" as inner {');
+    expect(out).toContain('package "Outer" as outer {');
+    // a is now wrapped, b stays at outer level
+    expect(out).toMatch(/package "Inner" as inner \{\n\s+component "A" as a\n\}/);
+    parseOk(out);
+  });
+});
+
+describe('generateUniqueGroupId', () => {
+  it('skips ids taken by any entity', () => {
+    const src = `@startuml
+component "A" as group1
+component "B" as b
+group1 -> b as group2
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(generateUniqueGroupId(doc)).toBe('group3');
   });
 });
 

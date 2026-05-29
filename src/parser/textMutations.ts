@@ -122,6 +122,60 @@ export function generateUniqueFlowName(doc: FlowDocument, prefix: string = 'flow
   return generateUniqueId(doc, prefix);
 }
 
+/** Generate a collision-free `group{N}` id (or any other prefix). */
+export function generateUniqueGroupId(doc: FlowDocument, prefix: string = 'group'): string {
+  return generateUniqueId(doc, prefix);
+}
+
+/**
+ * Move the given components into a new `package "<displayName>" as <packageId> { … }`
+ * block at the position of the first selected component (in source order).
+ * Each component's original line is reused verbatim, indented by 2 spaces.
+ * Connections, flows, and unselected components are untouched.
+ *
+ * Components without a source loc (e.g. synthetic) are silently skipped.
+ */
+export function wrapInPackage(
+  text: string,
+  doc: FlowDocument,
+  ids: string[],
+  packageId: string,
+  displayName: string,
+): string {
+  const components = ids
+    .map((id) => doc.components.find((c) => c.id === id))
+    .filter((c): c is FlowDocument['components'][number] & { loc: SourceLoc } =>
+      !!(c && c.loc),
+    );
+  if (components.length === 0) return text;
+
+  // Sort by appearance in source so the wrapped block reads top-to-bottom.
+  const sorted = [...components].sort((a, b) => a.loc.start - b.loc.start);
+
+  const memberLines = sorted.map((c) => '  ' + text.slice(c.loc.start, c.loc.end).trim());
+  const block =
+    [`package "${displayName}" as ${packageId} {`, ...memberLines, `}`].join('\n') + '\n';
+
+  // Walk the source once, slicing in unmodified spans and replacing the first
+  // wrapped component's line with the new block; subsequent wrapped lines
+  // are dropped.
+  let result = '';
+  let cursor = 0;
+  let blockInserted = false;
+  for (const c of sorted) {
+    const lineEnd = extendToTrailingNewline(text, c.loc);
+    if (!blockInserted) {
+      result += text.slice(cursor, c.loc.start) + block;
+      blockInserted = true;
+    } else {
+      result += text.slice(cursor, c.loc.start);
+    }
+    cursor = lineEnd;
+  }
+  result += text.slice(cursor);
+  return result;
+}
+
 function generateUniqueId(doc: FlowDocument, prefix: string): string {
   const taken = new Set<string>([
     ...doc.components.map((c) => c.id),

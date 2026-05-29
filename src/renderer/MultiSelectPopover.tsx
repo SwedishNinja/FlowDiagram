@@ -4,6 +4,8 @@ import {
   createFlow,
   findConnectionBetween,
   generateUniqueFlowName,
+  generateUniqueGroupId,
+  wrapInPackage,
 } from '../parser/textMutations';
 import type { LayoutNode } from '../types';
 
@@ -38,16 +40,17 @@ export default function MultiSelectPopover({
     !layout ||
     !transform ||
     selectionKind !== 'component' ||
-    selectedIds.length !== 2
+    selectedIds.length < 2
   ) {
     return null;
   }
-  const [firstId, secondId] = selectedIds;
-  const firstNode = layout.nodes.find((n) => n.id === firstId);
-  const secondNode = layout.nodes.find((n) => n.id === secondId);
-  if (!firstNode || !secondNode) return null;
+  const selectedNodes = selectedIds
+    .map((id) => layout.nodes.find((n) => n.id === id))
+    .filter((n): n is LayoutNode => !!n);
+  if (selectedNodes.length < 2) return null;
 
-  const screenPos = midpointToScreen(firstNode, secondNode, transform);
+  const screenPos = centroidToScreen(selectedNodes, transform);
+  const exactlyTwo = selectedIds.length === 2;
 
   return (
     <div
@@ -57,24 +60,28 @@ export default function MultiSelectPopover({
         top: screenPos.y,
         transform: 'translate(-50%, -50%)',
         zIndex: 11,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
       }}
-      // Keep canvas pointer handlers from firing through the popover.
       onPointerDown={(e) => e.stopPropagation()}
       onPointerUp={(e) => e.stopPropagation()}
       onWheel={(e) => e.stopPropagation()}
     >
-      <FlowCreateCard firstId={firstId!} secondId={secondId!} />
+      {exactlyTwo && <FlowCreateCard firstId={selectedIds[0]!} secondId={selectedIds[1]!} />}
+      <WrapInPackageCard ids={selectedIds} />
     </div>
   );
 }
 
-function midpointToScreen(
-  a: LayoutNode,
-  b: LayoutNode,
-  t: PopoverTransform,
-): { x: number; y: number } {
-  const mx = (a.x + a.width / 2 + b.x + b.width / 2) / 2;
-  const my = (a.y + a.height / 2 + b.y + b.height / 2) / 2;
+function centroidToScreen(nodes: LayoutNode[], t: PopoverTransform): { x: number; y: number } {
+  let sx = 0, sy = 0;
+  for (const n of nodes) {
+    sx += n.x + n.width / 2;
+    sy += n.y + n.height / 2;
+  }
+  const mx = sx / nodes.length;
+  const my = sy / nodes.length;
   return { x: mx * t.scale + t.offsetX, y: my * t.scale + t.offsetY };
 }
 
@@ -241,6 +248,70 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
       </div>
     </Card>
   );
+}
+
+function WrapInPackageCard({ ids }: { ids: string[] }) {
+  const ast = useFlowStore((s) => s.ast)!;
+  const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
+
+  const [packageId, setPackageId] = useState(() => generateUniqueGroupId(ast));
+  const [displayName, setDisplayName] = useState(() => titleCaseFromId(packageId));
+
+  const create = () => {
+    const trimmedId = packageId.trim();
+    const trimmedName = displayName.trim();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedId) || trimmedName === '') return;
+    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
+    if (!latestAst) return;
+    const taken = new Set<string>([
+      ...latestAst.components.map((c) => c.id),
+      ...latestAst.groups.map((g) => g.id),
+      ...latestAst.connections.map((c) => c.id),
+      ...latestAst.flows.map((f) => f.name),
+    ]);
+    if (taken.has(trimmedId)) return;
+    const updated = wrapInPackage(sourceText, latestAst, ids, trimmedId, trimmedName);
+    if (updated !== sourceText) setSourceText(updated);
+    setSelection(trimmedId, 'group');
+  };
+
+  return (
+    <Card>
+      <Header label={`Wrap ${ids.length} components`} />
+      <FieldRow label="Package id">
+        <input
+          type="text"
+          value={packageId}
+          onChange={(e) => setPackageId(e.target.value)}
+          style={textInputStyle}
+        />
+      </FieldRow>
+      <FieldRow label="Display name">
+        <input
+          type="text"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          style={textInputStyle}
+        />
+      </FieldRow>
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <button type="button" onClick={create} style={primaryButtonStyle}>
+          Wrap in package
+        </button>
+        <button type="button" onClick={clearSelection} style={smallButtonStyle}>
+          Cancel
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+/** Turn `group1` into `Group 1`. Cheap auto-title for the display field. */
+function titleCaseFromId(id: string): string {
+  const m = id.match(/^([a-zA-Z]+)(\d+)$/);
+  if (m) return m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1) + ' ' + m[2]!;
+  return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 function Card({ children }: { children: React.ReactNode }) {
