@@ -723,6 +723,67 @@ export function updateFlow(
 }
 
 /**
+ * Rename a package: replaces its `as <id>` clause, updates any standalone
+ * `package <id>` reference lines elsewhere in source (the packageRef form
+ * — no quoted display name and no braces), and remaps the `@positions`
+ * block key. Substring matches inside other identifiers are protected by
+ * word-boundary anchors.
+ */
+export function renameGroup(
+  text: string,
+  doc: FlowDocument,
+  oldId: string,
+  newId: string,
+): string {
+  if (oldId === newId) return text;
+  const group = doc.groups.find((g) => g.id === oldId);
+  if (!group?.loc) return text;
+
+  const edits: Edit[] = [];
+
+  // 1. Header `as <oldId>` → `as <newId>` inside the package's declaration line.
+  {
+    // Locate `as` followed by oldId inside the header (between loc.start and
+    // the opening brace).
+    const braceIdx = text.indexOf('{', group.loc.start);
+    const headerSlice = text.slice(
+      group.loc.start,
+      braceIdx === -1 ? group.loc.end : braceIdx,
+    );
+    const m = headerSlice.match(new RegExp(`(\\bas\\s+)${oldId}\\b`));
+    if (m && m.index !== undefined) {
+      const idStart = group.loc.start + m.index + m[1]!.length;
+      edits.push({ start: idStart, end: idStart + oldId.length, replacement: newId });
+    }
+  }
+
+  // 2. Standalone `package <oldId>` reference lines (no quoted display, no `{`).
+  //    Multi-line scan — match the whole line so we don't accidentally rewrite
+  //    a full package declaration that happens to contain the alias as a substring.
+  const refLineRe = new RegExp(
+    `(^|\\n)([ \\t]*package[ \\t]+)${oldId}([ \\t]*(?=\\r?\\n|$))`,
+    'g',
+  );
+  for (const m of text.matchAll(refLineRe)) {
+    const matchStart = m.index!;
+    const idStart = matchStart + m[1]!.length + m[2]!.length;
+    edits.push({ start: idStart, end: idStart + oldId.length, replacement: newId });
+  }
+
+  let next = applyEdits(text, edits);
+
+  // 3. Remap the @positions block, if oldId has an entry there.
+  if (group.id in doc.positions) {
+    const newPositions: Record<string, { x: number; y: number }> = { ...doc.positions };
+    newPositions[newId] = newPositions[oldId]!;
+    delete newPositions[oldId];
+    next = updatePositionsInSource(next, newPositions);
+  }
+
+  return next;
+}
+
+/**
  * Rename a connection: replace its `as <id>` clause and update every flow's
  * `on <id>` reference. For previously auto-id connections (`_conn_N`, no
  * source `as` clause) this inserts a fresh `as <newId>` between the target

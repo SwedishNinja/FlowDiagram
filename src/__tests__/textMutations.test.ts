@@ -15,6 +15,7 @@ import {
   renameComponent,
   renameConnection,
   renameFlow,
+  renameGroup,
   ungroupPackage,
   updateComponent,
   updateConnection,
@@ -584,6 +585,78 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('renameGroup', () => {
+  it('renames a root package and preserves children', () => {
+    const src = `@startuml
+package "G" as g {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameGroup(src, doc, 'g', 'renamed');
+    expect(out).toContain('package "G" as renamed {');
+    expect(out).toContain('component "A" as a');
+    parseOk(out);
+  });
+
+  it('updates packageRef lines elsewhere in source', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package inner
+}
+
+package "Inner" as inner {
+  component "A" as a
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameGroup(src, doc, 'inner', 'renamed');
+    expect(out).toContain('package "Inner" as renamed {');
+    expect(out).toMatch(/\bpackage renamed\b/);
+    expect(out).not.toMatch(/^[ \t]*package inner[ \t]*$/m);
+    parseOk(out);
+  });
+
+  it('remaps the @positions block key', () => {
+    const src = `@startuml
+package "G" as g {
+  component "A" as a
+}
+
+@positions
+  g: 100, 100
+  a: 100, 100
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameGroup(src, doc, 'g', 'renamed');
+    expect(out).toContain('package "G" as renamed {');
+    expect(out).toContain('renamed: 100, 100');
+    expect(out).not.toMatch(/^[ \t]*g: \d+, \d+/m);
+    parseOk(out);
+  });
+
+  it('does not match substrings inside other identifiers', () => {
+    const src = `@startuml
+package "G" as group1 {
+  component "A" as a
+}
+package "G2" as group11 {
+  component "B" as b
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameGroup(src, doc, 'group1', 'renamed');
+    expect(out).toContain('package "G" as renamed {');
+    // group11 must NOT be renamed.
+    expect(out).toContain('package "G2" as group11 {');
+    parseOk(out);
   });
 });
 

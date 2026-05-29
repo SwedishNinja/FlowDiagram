@@ -5,6 +5,7 @@ import {
   renameComponent,
   renameConnection,
   renameFlow,
+  renameGroup,
   ungroupPackage,
   updateComponent,
   updateConnection,
@@ -211,12 +212,33 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
 }
 
 function GroupInspector({ group }: { group: GroupNode }) {
+  const setSelection = useFlowStore((s) => s.setSelection);
   const clearSelection = useFlowStore((s) => s.clearSelection);
   const commit = (updates: Parameters<typeof updateGroup>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateGroup(sourceText, ast, group.id, updates);
     if (next !== sourceText) setSourceText(next);
+  };
+  const commitRename = (raw: string) => {
+    const newId = raw.trim();
+    if (newId === group.id) return;
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const taken = new Set<string>([
+      ...ast.components.map((c) => c.id),
+      ...ast.groups.map((g) => g.id),
+      ...ast.connections.map((c) => c.id),
+      ...ast.flows.map((f) => f.name),
+    ]);
+    taken.delete(group.id);
+    if (taken.has(newId)) return;
+    const next = renameGroup(sourceText, ast, group.id, newId);
+    if (next !== sourceText) {
+      setSourceText(next);
+      setSelection(newId, 'group');
+    }
   };
   const ungroup = () => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
@@ -235,6 +257,13 @@ function GroupInspector({ group }: { group: GroupNode }) {
   return (
     <>
       <Header label="Package" id={group.id} />
+      <FieldRow label="Name">
+        <CommitTextInput
+          initial={group.id}
+          placeholder="alias"
+          onCommit={commitRename}
+        />
+      </FieldRow>
       <FieldRow label="Display name">
         <CommitTextInput
           initial={group.displayName}
