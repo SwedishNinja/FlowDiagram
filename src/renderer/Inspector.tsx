@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
+  deleteComponent,
+  deleteConnection,
+  deleteFlow,
   deleteGroup,
   renameComponent,
   renameConnection,
@@ -69,11 +72,19 @@ export default function Inspector() {
 
 function ComponentInspector({ comp }: { comp: ComponentNode }) {
   const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
   const commit = (updates: Parameters<typeof updateComponent>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateComponent(sourceText, ast, comp.id, updates);
     if (next !== sourceText) setSourceText(next);
+  };
+  const cascadeDelete = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteComponent(sourceText, ast, comp.id);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
   };
   const commitRename = (raw: string) => {
     const newId = raw.trim();
@@ -122,6 +133,11 @@ function ComponentInspector({ comp }: { comp: ComponentNode }) {
           onCommit={(v) => commit({ stereotype: v.trim() === '' ? null : v.trim() })}
         />
       </FieldRow>
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
+          Delete component
+        </button>
+      </div>
     </>
   );
 }
@@ -129,12 +145,21 @@ function ComponentInspector({ comp }: { comp: ComponentNode }) {
 function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
   const flows = useFlowStore((s) => s.ast?.flows ?? []);
   const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
 
   const commit = (updates: Parameters<typeof updateConnection>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateConnection(sourceText, ast, conn.id, updates);
     if (next !== sourceText) setSourceText(next);
+  };
+
+  const cascadeDelete = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteConnection(sourceText, ast, conn.id);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
   };
 
   const commitRename = (raw: string) => {
@@ -207,6 +232,11 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
           </div>
         </FieldRow>
       )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
+          Delete connection{flowsOnThis.length > 0 ? ' + flows' : ''}
+        </button>
+      </div>
     </>
   );
 }
@@ -292,15 +322,7 @@ function GroupInspector({ group }: { group: GroupNode }) {
         }}>
           Ungroup
         </button>
-        <button type="button" onClick={cascadeDelete} style={{
-          font: '11px inherit',
-          background: 'transparent',
-          border: '1px solid #fca5a5',
-          borderRadius: 4,
-          padding: '6px 10px',
-          cursor: 'pointer',
-          color: '#b91c1c',
-        }}>
+        <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
           Delete with contents
         </button>
       </div>
@@ -375,12 +397,21 @@ function CollapseAtField({
 
 function FlowInspector({ flow }: { flow: FlowNode }) {
   const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
 
   const commit = (updates: Parameters<typeof updateFlow>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
     if (!ast) return;
     const next = updateFlow(sourceText, ast, flow.name, updates);
     if (next !== sourceText) setSourceText(next);
+  };
+
+  const deleteThis = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteFlow(sourceText, ast, flow.name);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
   };
 
   const commitRename = (rawNew: string) => {
@@ -470,6 +501,11 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
           />
         </FieldRow>
       )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" onClick={deleteThis} style={dangerButtonStyle}>
+          Delete flow
+        </button>
+      </div>
     </>
   );
 }
@@ -730,4 +766,14 @@ const clearButtonStyle: React.CSSProperties = {
   padding: '3px 6px',
   cursor: 'pointer',
   color: '#475569',
+};
+
+const dangerButtonStyle: React.CSSProperties = {
+  font: '11px inherit',
+  background: 'transparent',
+  border: '1px solid #fca5a5',
+  borderRadius: 4,
+  padding: '6px 10px',
+  cursor: 'pointer',
+  color: '#b91c1c',
 };
