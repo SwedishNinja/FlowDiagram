@@ -1228,8 +1228,28 @@ export default function FlowCanvas() {
 
 function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' }) {
   const setToolMode = useFlowStore((s) => s.setToolMode);
+  const stages = useFlowStore((s) => s.ast?.stages ?? []);
+  const setSelection = useFlowStore((s) => s.setSelection);
+  const [stagesOpen, setStagesOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!stagesOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      const boundary = wrapperRef.current;
+      if (boundary && !boundary.contains(e.target as Node)) setStagesOpen(false);
+    };
+    // Defer one tick so the click that opened the menu doesn't close it.
+    const t = setTimeout(() => document.addEventListener('mousedown', onDocDown), 0);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('mousedown', onDocDown);
+    };
+  }, [stagesOpen]);
+
   return (
     <div
+      ref={wrapperRef}
       style={{
         position: 'absolute',
         top: 12,
@@ -1256,6 +1276,57 @@ function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' })
         label="Add Component"
         shortcut="C"
       />
+      <ToolButton
+        active={stagesOpen}
+        onClick={() => setStagesOpen((v) => !v)}
+        label={`Stages${stages.length > 0 ? ` (${stages.length})` : ''}`}
+        shortcut=""
+      />
+      {stagesOpen && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            background: '#f8fafc',
+            borderRadius: 4,
+            padding: 4,
+            marginTop: -2,
+          }}
+        >
+          {stages.length === 0 ? (
+            <div style={{ font: '11px inherit', color: '#94a3b8', padding: '4px 6px' }}>
+              No stages defined
+            </div>
+          ) : (
+            stages.map((s) => (
+              <button
+                key={s.name}
+                type="button"
+                onClick={() => {
+                  setSelection(s.name, 'stage');
+                  setStagesOpen(false);
+                }}
+                style={{
+                  font: '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+                  background: 'transparent',
+                  color: '#475569',
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '4px 8px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                {s.name}
+                <span style={{ color: '#94a3b8', marginLeft: 6, fontSize: 11 }}>
+                  ({s.flowNames.length})
+                </span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1275,7 +1346,7 @@ function ToolButton({
     <button
       type="button"
       onClick={onClick}
-      title={`${label} (${shortcut})`}
+      title={shortcut ? `${label} (${shortcut})` : label}
       style={{
         font: '12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         background: active ? '#3b82f6' : 'transparent',
