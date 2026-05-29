@@ -4,6 +4,7 @@ import {
   appendConnection,
   createComponent,
   createFlow,
+  reorderFlowsInStage,
   deleteComponent,
   deleteConnection,
   deleteFlow,
@@ -585,6 +586,105 @@ a -> b as ab
     const out = createFlow(src, doc, { name: 'x', connection: 'ab' });
     expect(out.indexOf('@flow x')).toBeLessThan(out.indexOf('@positions'));
     parseOk(out);
+  });
+
+  it('lands at root, not inside an existing @stage block, by default', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow first on ab
+    every: 1s
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createFlow(src, doc, { name: 'untagged', connection: 'ab' });
+    // The new flow must NOT be wrapped inside the stage block.
+    expect(out.indexOf('@flow untagged')).toBeGreaterThan(out.indexOf('@end_stage'));
+    // It must still parse and the parser must NOT tag it with a stage.
+    const out2 = parseOk(out);
+    const newFlow = out2.flows.find((f) => f.name === 'untagged')!;
+    expect(newFlow.stage).toBeUndefined();
+  });
+
+  it('places the new flow inside the target stage when stage: is set', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow first on ab
+    every: 1s
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createFlow(src, doc, {
+      name: 'second',
+      connection: 'ab',
+      stage: 'warmup',
+    });
+    // New flow lives inside the stage block.
+    expect(out.indexOf('@flow second')).toBeGreaterThan(out.indexOf('@stage warmup'));
+    expect(out.indexOf('@flow second')).toBeLessThan(out.indexOf('@end_stage'));
+    // Parser reports it as part of the stage.
+    const out2 = parseOk(out);
+    const newFlow = out2.flows.find((f) => f.name === 'second')!;
+    expect(newFlow.stage).toBe('warmup');
+  });
+});
+
+describe('reorderFlowsInStage', () => {
+  const SRC = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  after: nothing
+  repeat: true
+  @flow first on ab
+    every: 1s
+  @flow second on ab
+    every: 2s
+  @flow third on ab
+    every: 3s
+@end_stage
+
+@stage nothing
+@end_stage
+@enduml
+`;
+
+  it('swaps two flows', () => {
+    const doc = parseOk(SRC);
+    const out = reorderFlowsInStage(SRC, doc, 'warmup', ['second', 'first', 'third']);
+    expect(out.indexOf('@flow second')).toBeLessThan(out.indexOf('@flow first'));
+    expect(out.indexOf('@flow first')).toBeLessThan(out.indexOf('@flow third'));
+    // after/repeat lines stay where they were.
+    expect(out.indexOf('after: nothing')).toBeLessThan(out.indexOf('@flow second'));
+    expect(out.indexOf('repeat: true')).toBeLessThan(out.indexOf('@flow second'));
+    parseOk(out);
+  });
+
+  it('rotates three flows', () => {
+    const doc = parseOk(SRC);
+    const out = reorderFlowsInStage(SRC, doc, 'warmup', ['third', 'first', 'second']);
+    // Each flow keeps its own properties intact.
+    expect(out).toMatch(/@flow third on ab\n\s+every: 3s/);
+    expect(out).toMatch(/@flow first on ab\n\s+every: 1s/);
+    expect(out).toMatch(/@flow second on ab\n\s+every: 2s/);
+    parseOk(out);
+  });
+
+  it('returns input unchanged when the new order doesn\'t match exactly', () => {
+    const doc = parseOk(SRC);
+    expect(reorderFlowsInStage(SRC, doc, 'warmup', ['first', 'second'])).toBe(SRC);
+    expect(reorderFlowsInStage(SRC, doc, 'warmup', ['first', 'second', 'ghost'])).toBe(SRC);
   });
 });
 

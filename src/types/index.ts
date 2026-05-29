@@ -80,6 +80,8 @@ export interface StageNode {
   repeat: boolean;
   /** Flow names that live in this stage. */
   flowNames: string[];
+  /** Byte offsets of the @stage … @end_stage block in source. */
+  loc?: SourceLoc;
 }
 
 // --- Layout result types ---

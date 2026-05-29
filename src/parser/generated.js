@@ -356,6 +356,7 @@ function peg$parse(input, options) {
           after: entry.after,
           repeat: entry.repeat,
           flowNames,
+          loc: entry.loc,
         });
       }
       else if (entry.type === 'positions') {
@@ -396,7 +397,7 @@ function peg$parse(input, options) {
   function peg$f6(stmt) {    return stmt;  }
   function peg$f7() {    return null;  }
   function peg$f8(name, parts) {
-    const stage = { type: 'stage', name, after: [], repeat: false, flows: [] };
+    const stage = { type: 'stage', name, after: [], repeat: false, flows: [], loc: { start: location().start.offset, end: location().end.offset } };
     for (const part of parts) {
       if (!part) continue;
       if (part.type === 'flow') stage.flows.push(part);

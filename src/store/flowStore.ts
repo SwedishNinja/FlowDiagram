@@ -56,13 +56,13 @@ export interface FlowStore {
    *  `selectionKind` — mixed-kind selection isn't supported. The first item
    *  is the primary (used as `selectedId` for single-kind inspectors). */
   selectedIds: string[];
-  selectionKind: 'component' | 'connection' | 'flow' | 'group' | null;
+  selectionKind: 'component' | 'connection' | 'flow' | 'group' | 'stage' | null;
   /** Replace the selection with a single entity. */
-  setSelection: (id: string, kind: 'component' | 'connection' | 'flow' | 'group') => void;
+  setSelection: (id: string, kind: 'component' | 'connection' | 'flow' | 'group' | 'stage') => void;
   /** Extend the selection. If the kind doesn't match the current set, the
    *  selection is replaced instead. If the id is already in the set, it
    *  is removed (toggle behavior). */
-  addToSelection: (id: string, kind: 'component' | 'connection' | 'flow' | 'group') => void;
+  addToSelection: (id: string, kind: 'component' | 'connection' | 'flow' | 'group' | 'stage') => void;
   clearSelection: () => void;
 
   /** Active canvas tool. 'select' is the default — clicks select/drag nodes.

@@ -102,6 +102,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
   const [direction, setDirection] = useState<'forward' | 'reverse'>(
     match?.reverseToMatchOrder ? 'reverse' : 'forward',
   );
+  const [stage, setStage] = useState<string>(''); // '' = no stage
 
   // Sync direction when the matched connection changes (e.g. user re-selected).
   useEffect(() => {
@@ -147,6 +148,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
       intervalMs: everyMs,
       traverseTimeMs: traverseMs,
       direction,
+      stage: stage === '' ? null : stage,
     });
     if (updated !== sourceText) setSourceText(updated);
     setSelection(trimmedName, 'flow');
@@ -199,6 +201,20 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
             </button>
           )}
         </div>
+      </FieldRow>
+      <FieldRow label="Stage">
+        <select
+          value={stage}
+          onChange={(e) => setStage(e.target.value)}
+          style={{ ...textInputStyle, padding: '5px 6px' }}
+        >
+          <option value="">(no stage)</option>
+          {ast.stages.map((s) => (
+            <option key={s.name} value={s.name}>
+              {s.name}
+            </option>
+          ))}
+        </select>
       </FieldRow>
       <FieldRow label="Direction">
         <Segmented

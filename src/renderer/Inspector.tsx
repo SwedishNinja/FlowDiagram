@@ -9,13 +9,14 @@ import {
   renameConnection,
   renameFlow,
   renameGroup,
+  reorderFlowsInStage,
   ungroupPackage,
   updateComponent,
   updateConnection,
   updateFlow,
   updateGroup,
 } from '../parser/textMutations';
-import type { ComponentNode, ConnectionNode, FlowNode, GroupNode } from '../types';
+import type { ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode } from '../types';
 
 /**
  * Floating right-side panel that surfaces editable fields for the currently
@@ -45,6 +46,9 @@ export default function Inspector() {
   } else if (selectionKind === 'group') {
     const group = ast.groups.find((g) => g.id === selectedId);
     if (group) body = <GroupInspector group={group} />;
+  } else if (selectionKind === 'stage') {
+    const stage = ast.stages.find((s) => s.name === selectedId);
+    if (stage) body = <StageInspector stage={stage} />;
   }
   if (!body) return null;
 
@@ -447,6 +451,18 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
         >
           {flow.connection}
         </button>
+        {flow.stage && (
+          <>
+            {' · in stage '}
+            <button
+              type="button"
+              onClick={() => setSelection(flow.stage!, 'stage')}
+              style={inlineLinkStyle}
+            >
+              {flow.stage}
+            </button>
+          </>
+        )}
       </div>
       <FieldRow label="Name">
         <CommitTextInput
@@ -508,6 +524,96 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
       </div>
     </>
   );
+}
+
+function StageInspector({ stage }: { stage: StageNode }) {
+  const setSelection = useFlowStore((s) => s.setSelection);
+
+  const reorder = (from: number, to: number) => {
+    if (to < 0 || to >= stage.flowNames.length || to === from) return;
+    const newOrder = [...stage.flowNames];
+    const [moved] = newOrder.splice(from, 1);
+    newOrder.splice(to, 0, moved!);
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = reorderFlowsInStage(sourceText, ast, stage.name, newOrder);
+    if (next !== sourceText) setSourceText(next);
+  };
+
+  return (
+    <>
+      <Header label="Stage" id={stage.name} />
+      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
+        {stage.repeat ? 'repeats' : 'runs once'}
+        {stage.after.length > 0 && ` · after ${stage.after.join(', ')}`}
+      </div>
+      <FieldRow label="Flows (in order)">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {stage.flowNames.length === 0 && (
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>(no flows in this stage)</div>
+          )}
+          {stage.flowNames.map((name, i) => (
+            <div
+              key={name}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 6px',
+                border: '1px solid #e2e8f0',
+                borderRadius: 4,
+                background: '#f8fafc',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelection(name, 'flow')}
+                style={{
+                  ...inlineLinkStyle,
+                  flex: 1,
+                  textAlign: 'left',
+                  textDecoration: 'none',
+                  color: '#1e293b',
+                }}
+              >
+                {name}
+              </button>
+              <button
+                type="button"
+                onClick={() => reorder(i, i - 1)}
+                disabled={i === 0}
+                title="Move up"
+                style={arrowButtonStyle(i === 0)}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => reorder(i, i + 1)}
+                disabled={i === stage.flowNames.length - 1}
+                title="Move down"
+                style={arrowButtonStyle(i === stage.flowNames.length - 1)}
+              >
+                ↓
+              </button>
+            </div>
+          ))}
+        </div>
+      </FieldRow>
+    </>
+  );
+}
+
+function arrowButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    font: '12px inherit',
+    background: 'transparent',
+    border: '1px solid #cbd5e1',
+    borderRadius: 4,
+    padding: '2px 8px',
+    cursor: disabled ? 'default' : 'pointer',
+    color: disabled ? '#cbd5e1' : '#475569',
+  };
 }
 
 function arrowKeyFor(

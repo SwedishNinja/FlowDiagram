@@ -218,9 +218,14 @@ type ConnectionNodeWithLoc = FlowDocument['connections'][number];
 
 /**
  * Append a new @flow block. Optional fields default to a sensible canonical
- * flow: every 1000ms, 1500ms traverse time, forward direction. Insertion
- * order: after the last flow, else after the last connection (with blank
- * line), else before @positions / @enduml.
+ * flow: every 1000ms, 1500ms traverse time, forward direction.
+ *
+ * Stage handling:
+ *   • opts.stage is null/undefined (default) → insert at root level. Anchored
+ *     on the last ROOT-level flow (a flow without `stage` set), so a new flow
+ *     never accidentally lands inside an existing @stage block.
+ *   • opts.stage = "warmup" → insert inside that stage's body, after the
+ *     last flow already in the stage (or as the first body line if empty).
  */
 export function createFlow(
   text: string,
@@ -236,6 +241,8 @@ export function createFlow(
     direction?: 'forward' | 'reverse';
     startDelayMs?: number;
     after?: string[];
+    /** Target stage name, or null/undefined for root-level. */
+    stage?: string | null;
   },
 ): string {
   const intervalMs = opts.intervalMs ?? 1000;
@@ -244,7 +251,9 @@ export function createFlow(
   const direction = opts.direction ?? 'forward';
   const startDelayMs = opts.startDelayMs ?? 0;
   const after = opts.after ?? [];
+  const targetStage = opts.stage ?? null;
 
+  // Build the unindented block; targetStage path adds its own indent.
   const lines: string[] = [`@flow ${opts.name} on ${opts.connection}`];
   if (opts.data) lines.push(`  data: "${opts.data}"`);
   if (hasRate) lines.push(`  every: ${Math.round(intervalMs)}ms`);
@@ -253,17 +262,30 @@ export function createFlow(
   if (direction === 'reverse') lines.push(`  direction: reverse`);
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
   if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
+
+  if (targetStage) {
+    return insertFlowInStage(text, doc, targetStage, lines);
+  }
+
   const block = lines.join('\n') + '\n';
 
+  // Anchor on the last ROOT-level flow only — flows inside @stage blocks are
+  // excluded so we never accidentally append into one.
   let anchorEnd = -1;
   let needsBlankLine = false;
 
   for (const f of doc.flows) {
+    if (f.stage) continue;
     if (f.loc && f.loc.end > anchorEnd) anchorEnd = f.loc.end;
   }
   if (anchorEnd === -1) {
+    // No root-level flows yet. Fall back to anchoring after the last
+    // connection or @stage block, whichever is further along.
     for (const c of doc.connections) {
       if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
+    }
+    for (const s of doc.stages) {
+      if (s.loc && s.loc.end > anchorEnd) anchorEnd = s.loc.end;
     }
     if (anchorEnd !== -1) needsBlankLine = true;
   }
@@ -289,6 +311,56 @@ export function createFlow(
       ? '\n' + block
       : (needsBlankLine ? '\n' : '') + block;
   return text.slice(0, pos) + insertion + text.slice(pos);
+}
+
+/** Insert a flow block inside a specific @stage block. */
+function insertFlowInStage(
+  text: string,
+  doc: FlowDocument,
+  stageName: string,
+  bodyLines: string[],
+): string {
+  const stage = doc.stages.find((s) => s.name === stageName);
+  if (!stage?.loc) {
+    // Stage not found or no loc — fall back to root-level append behaviour
+    // by recursing with stage cleared.
+    return createFlow(text, doc, {
+      name: extractFlowNameFromBlock(bodyLines),
+      connection: extractFlowConnFromBlock(bodyLines),
+      stage: null,
+    });
+  }
+
+  // Stage block runs from `@stage <name>` to `@end_stage\n`. Locate the
+  // `@end_stage` token so we can insert just before its line.
+  const endTokenIdx = text.indexOf('@end_stage', stage.loc.start);
+  if (endTokenIdx === -1 || endTokenIdx >= stage.loc.end) return text;
+
+  // Find the start of the line that holds @end_stage.
+  let endLineStart = endTokenIdx;
+  while (endLineStart > 0 && text[endLineStart - 1] !== '\n') endLineStart--;
+
+  // Stage's own indent (whitespace before `@stage`).
+  let stageIndentEnd = stage.loc.start;
+  while (
+    stageIndentEnd < text.length &&
+    (text[stageIndentEnd] === ' ' || text[stageIndentEnd] === '\t')
+  ) {
+    stageIndentEnd++;
+  }
+  const stageIndent = text.slice(stage.loc.start, stageIndentEnd);
+  const bodyIndent = stageIndent + '  ';
+
+  const indented = bodyLines.map((l) => bodyIndent + l).join('\n') + '\n';
+  return text.slice(0, endLineStart) + indented + text.slice(endLineStart);
+}
+
+function extractFlowNameFromBlock(lines: string[]): string {
+  return lines[0]!.replace(/^@flow\s+/, '').split(/\s+/)[0]!;
+}
+function extractFlowConnFromBlock(lines: string[]): string {
+  const m = lines[0]!.match(/on\s+(\w+)/);
+  return m ? m[1]! : '';
 }
 
 /**
@@ -761,6 +833,56 @@ export function updateFlow(
   const block = body.map((l) => indent + l).join('\n') + '\n';
 
   return text.slice(0, flow.loc.start) + block + text.slice(flow.loc.end);
+}
+
+/**
+ * Reorder the flows inside an `@stage` block. `newOrder` lists the flow
+ * names in the desired order — must contain exactly the flows currently in
+ * the stage (no additions, no removals; mismatch returns the source
+ * untouched). Non-flow lines (`after:`, `repeat:`, comments, blanks) keep
+ * their original positions; only the @flow blocks rearrange.
+ */
+export function reorderFlowsInStage(
+  text: string,
+  doc: FlowDocument,
+  stageName: string,
+  newOrder: string[],
+): string {
+  const stage = doc.stages.find((s) => s.name === stageName);
+  if (!stage) return text;
+  const stageFlowNames = new Set(stage.flowNames);
+  if (newOrder.length !== stage.flowNames.length) return text;
+  if (newOrder.some((n) => !stageFlowNames.has(n))) return text;
+
+  // Each flow in this stage with its loc, sorted by source position.
+  const flowsInStage = doc.flows
+    .filter((f) => f.stage === stageName && f.loc)
+    .sort((a, b) => a.loc!.start - b.loc!.start);
+  if (flowsInStage.length !== stage.flowNames.length) return text;
+
+  // Existing slots are the ORIGINAL loc ranges. We'll keep those slot
+  // positions and rotate the BODY text between them.
+  const slots = flowsInStage.map((f) => ({
+    start: f.loc!.start,
+    end: f.loc!.end,
+  }));
+  // Map newOrder → which original flow text fills each slot.
+  const flowByName = new Map(flowsInStage.map((f) => [f.name, f]));
+  const newBodies = newOrder.map((name) => {
+    const f = flowByName.get(name)!;
+    return text.slice(f.loc!.start, f.loc!.end);
+  });
+
+  // Stitch: walk through slots in source order, replacing each slot's text
+  // with the body assigned to its index in newOrder.
+  let result = '';
+  let cursor = 0;
+  for (let i = 0; i < slots.length; i++) {
+    result += text.slice(cursor, slots[i]!.start) + newBodies[i]!;
+    cursor = slots[i]!.end;
+  }
+  result += text.slice(cursor);
+  return result;
 }
 
 /**

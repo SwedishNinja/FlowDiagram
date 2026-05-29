@@ -40,7 +40,7 @@ export interface DrawOptions {
    *  selectionKind. The renderer highlights node rings or edge strokes
    *  according to that kind. */
   selectedIds?: ReadonlyArray<string> | null;
-  selectionKind?: 'component' | 'connection' | 'flow' | 'group' | null;
+  selectionKind?: 'component' | 'connection' | 'flow' | 'group' | 'stage' | null;
   /** ID of the node the pointer is currently hovering over (when not dragging).
    *  Used to surface the connection-create handles. */
   hoveredId?: string | null;

@@ -71,6 +71,7 @@ Body
           after: entry.after,
           repeat: entry.repeat,
           flowNames,
+          loc: entry.loc,
         });
       }
       else if (entry.type === 'positions') {
@@ -135,7 +136,7 @@ StageBlock
     parts:StagePart*
     _ "@end_stage" _ NL
   {
-    const stage = { type: 'stage', name, after: [], repeat: false, flows: [] };
+    const stage = { type: 'stage', name, after: [], repeat: false, flows: [], loc: { start: location().start.offset, end: location().end.offset } };
     for (const part of parts) {
       if (!part) continue;
       if (part.type === 'flow') stage.flows.push(part);
