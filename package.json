@@ -1,7 +1,11 @@
 {
   "name": "flowdiagram",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SwedishNinja/FlowDiagram.git"
+  },
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -17,7 +21,7 @@
     "pack": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win --dir && cd release && rm -f FlowDiagram-1.0.0-win-x64.zip && zip -r FlowDiagram-1.0.0-win-x64.zip win-unpacked/",
-    "dist:win-installer": "npm run build && electron-builder --win",
+    "dist:win-installer": "npm run build && electron-builder --win nsis",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:mac": "npm run build && electron-builder --mac"
   },
@@ -36,6 +40,7 @@
     "asar": true,
     "win": {
       "target": [
+        "nsis",
         "zip"
       ],
       "artifactName": "${productName}-${version}-win-x64.${ext}"
@@ -46,7 +51,13 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "FlowDiagram"
+      "shortcutName": "FlowDiagram",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "SwedishNinja",
+      "repo": "FlowDiagram"
     },
     "linux": {
       "target": [
