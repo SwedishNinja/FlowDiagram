@@ -35,9 +35,11 @@ import type {
 const EMPTY_FLOWS: ReadonlyArray<FlowNode> = [];
 const EMPTY_GROUPS: ReadonlyArray<GroupNode> = [];
 const EMPTY_STAGES: ReadonlyArray<StageNode> = [];
+const EMPTY_CONNS: ReadonlyArray<ConnectionNode> = [];
 function selectFlows(s: { ast: FlowDocument | null }) { return s.ast?.flows ?? EMPTY_FLOWS; }
 function selectGroups(s: { ast: FlowDocument | null }) { return s.ast?.groups ?? EMPTY_GROUPS; }
 function selectStages(s: { ast: FlowDocument | null }) { return s.ast?.stages ?? EMPTY_STAGES; }
+function selectConns(s: { ast: FlowDocument | null }) { return s.ast?.connections ?? EMPTY_CONNS; }
 
 // ── Layout constants ──────────────────────────────────────────────────────────
 const PANEL_WIDTH = 260;
@@ -344,8 +346,60 @@ function ComponentForm({ comp }: { comp: ComponentNode }) {
         <TextInput initial={comp.stereotype ?? ''} placeholder="(none)" onCommit={(v) => commit({ stereotype: v.trim() === '' ? null : v.trim() })} />
       </Field>
       <PackageSelect comp={comp} />
+      <ComponentConnections compId={comp.id} />
       <DangerButton onClick={cascadeDelete}>Delete component</DangerButton>
     </>
+  );
+}
+
+function ComponentConnections({ compId }: { compId: string }) {
+  const conns = useFlowStore(selectConns);
+  const setSelection = useFlowStore((s) => s.setSelection);
+
+  const related = conns.filter((c) => c.source === compId || c.target === compId);
+  if (related.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-4)', letterSpacing: '0.08em', display: 'block', marginBottom: 5 }}>Connections</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+        {related.map((c) => {
+          const outgoing = c.source === compId;
+          const isBi = c.arrowStyle === 'bidirectional';
+          const arrow = isBi ? '↔' : outgoing ? '→' : '←';
+          const other = outgoing ? c.target : c.source;
+          const hasName = !c.id.startsWith('_conn_');
+          return (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => setSelection(c.id, 'connection')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                padding: '4px 6px',
+                border: '1px solid var(--line)',
+                borderRadius: 'var(--r-sm)',
+                background: 'var(--surface-3)',
+                cursor: 'pointer',
+                textAlign: 'left',
+                fontFamily: 'inherit',
+                width: '100%',
+              }}
+            >
+              <span style={{ color: 'var(--ink-4)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>{arrow}</span>
+              <span style={{ color: 'var(--ink-2)', fontSize: 'var(--fs-xs)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {other}
+              </span>
+              {hasName && (
+                <span style={{ color: 'var(--ink-5)', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>{c.id}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
