@@ -390,6 +390,107 @@ export function moveComponent(
 }
 
 /**
+ * Move an existing flow into a different stage (or to the document root
+ * when targetStage is null). The flow's block is reused verbatim — every
+ * configured property survives — only its outer indent depth changes to
+ * match the new home.
+ *
+ * Returns the source unchanged when:
+ *   • the flow already lives in the target,
+ *   • the flow has no source loc, or
+ *   • the target stage name doesn't resolve.
+ */
+export function moveFlowToStage(
+  text: string,
+  doc: FlowDocument,
+  flowName: string,
+  targetStage: string | null,
+): string {
+  const flow = doc.flows.find((f) => f.name === flowName);
+  if (!flow?.loc) return text;
+  const currentStage = flow.stage ?? null;
+  if (currentStage === targetStage) return text;
+
+  // Capture current outer indent (whitespace before @flow).
+  let curIndentEnd = flow.loc.start;
+  while (
+    curIndentEnd < text.length &&
+    (text[curIndentEnd] === ' ' || text[curIndentEnd] === '\t')
+  ) {
+    curIndentEnd++;
+  }
+  const curIndent = text.slice(flow.loc.start, curIndentEnd);
+
+  // Original block lines, with their current outer indent stripped so we
+  // keep body-vs-header relative indentation but lose stage-depth.
+  const blockText = text.slice(flow.loc.start, flow.loc.end);
+  const trimTrailing = blockText.endsWith('\n')
+    ? blockText.slice(0, -1)
+    : blockText;
+  const stripped = trimTrailing.split('\n').map((line) =>
+    line.startsWith(curIndent) ? line.slice(curIndent.length) : line,
+  );
+
+  // Resolve target indent (stage body indent, or empty for root).
+  let targetIndent = '';
+  let stage: typeof doc.stages[number] | undefined;
+  if (targetStage !== null) {
+    stage = doc.stages.find((s) => s.name === targetStage);
+    if (!stage?.loc) return text;
+    let stageIndentEnd = stage.loc.start;
+    while (
+      stageIndentEnd < text.length &&
+      (text[stageIndentEnd] === ' ' || text[stageIndentEnd] === '\t')
+    ) {
+      stageIndentEnd++;
+    }
+    targetIndent = text.slice(stage.loc.start, stageIndentEnd) + '  ';
+  }
+
+  // Re-indent. Empty lines stay empty (no trailing whitespace).
+  const reindented =
+    stripped.map((l) => (l.length === 0 ? '' : targetIndent + l)).join('\n') + '\n';
+
+  // Phase 1: cut the original block (with its trailing newline if any).
+  const cutStart = flow.loc.start;
+  const cutEnd = blockText.endsWith('\n') ? flow.loc.end : extendToTrailingNewline(text, flow.loc);
+  const cutLen = cutEnd - cutStart;
+  const deleted = text.slice(0, cutStart) + text.slice(cutEnd);
+
+  // Phase 2: insert at target location, adjusting for the cut shift.
+  if (targetStage === null) {
+    // Root insertion: before @positions / @enduml, or end of file.
+    const positionsIdx = deleted.indexOf('@positions');
+    const endumlIdx = deleted.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      return deleted + (deleted.endsWith('\n') ? '' : '\n') + reindented;
+    }
+    const before = Math.min(...candidates);
+    return deleted.slice(0, before) + reindented + deleted.slice(before);
+  }
+
+  // Stage insertion: before @end_stage of the target stage.
+  let adjStart = stage!.loc!.start;
+  let adjEnd = stage!.loc!.end;
+  if (cutStart < stage!.loc!.start) {
+    adjStart -= cutLen;
+    adjEnd -= cutLen;
+  } else if (cutStart < stage!.loc!.end) {
+    // The flow was already inside the target stage — caught by the early
+    // return above when currentStage === targetStage. Defensive fallback.
+    return text;
+  }
+
+  const endIdx = deleted.indexOf('@end_stage', adjStart);
+  if (endIdx === -1 || endIdx >= adjEnd) return text;
+  let endLineStart = endIdx;
+  while (endLineStart > 0 && deleted[endLineStart - 1] !== '\n') endLineStart--;
+
+  return deleted.slice(0, endLineStart) + reindented + deleted.slice(endLineStart);
+}
+
+/**
  * Move the given components into a new `package "<displayName>" as <packageId> { … }`
  * block at the position of the first selected component (in source order).
  * Each component's original line is reused verbatim, indented by 2 spaces.

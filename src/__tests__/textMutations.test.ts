@@ -7,6 +7,7 @@ import {
   createStage,
   deleteStage,
   moveComponent,
+  moveFlowToStage,
   reorderFlowsInStage,
   updateStage,
   deleteComponent,
@@ -893,6 +894,105 @@ a -> b as ab
     expect(out).toContain('@stage warmup');
     expect(out).toContain('@stage main');
     parseOk(out);
+  });
+});
+
+describe('moveFlowToStage', () => {
+  it('moves a root flow into a stage with body indent', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow ping on ab
+  every: 1s
+  data: "hi"
+
+@stage warmup
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveFlowToStage(src, doc, 'ping', 'warmup');
+    expect(out).toMatch(/@stage warmup\n  @flow ping on ab\n    every: 1s\n    data: "hi"\n@end_stage/);
+    // ping no longer at root.
+    expect(out).not.toMatch(/^@flow ping on ab/m);
+    const out2 = parseOk(out);
+    expect(out2.flows.find((f) => f.name === 'ping')!.stage).toBe('warmup');
+  });
+
+  it('moves a flow from a stage back to the root with root indent', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow ping on ab
+    every: 1s
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveFlowToStage(src, doc, 'ping', null);
+    expect(out).toMatch(/^@flow ping on ab$/m);
+    expect(out).toMatch(/^  every: 1s$/m);
+    // Stage still exists but empty.
+    expect(out).toMatch(/@stage warmup\n@end_stage/);
+    const out2 = parseOk(out);
+    expect(out2.flows.find((f) => f.name === 'ping')!.stage).toBeUndefined();
+  });
+
+  it('moves a flow from one stage to another', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage one
+  @flow ping on ab
+    every: 1s
+@end_stage
+
+@stage two
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = moveFlowToStage(src, doc, 'ping', 'two');
+    expect(out).toMatch(/@stage one\n@end_stage/);
+    expect(out).toMatch(/@stage two\n  @flow ping on ab\n    every: 1s\n@end_stage/);
+    parseOk(out);
+  });
+
+  it('is a no-op when target stage equals current', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage one
+  @flow ping on ab
+    every: 1s
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(moveFlowToStage(src, doc, 'ping', 'one')).toBe(src);
+  });
+
+  it('returns the source unchanged when the target stage does not exist', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow ping on ab
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(moveFlowToStage(src, doc, 'ping', 'ghost')).toBe(src);
   });
 });
 

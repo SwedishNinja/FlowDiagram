@@ -7,6 +7,7 @@ import {
   deleteGroup,
   deleteStage,
   moveComponent,
+  moveFlowToStage,
   renameComponent,
   renameConnection,
   renameFlow,
@@ -186,6 +187,40 @@ function PackageSelectField({ comp }: { comp: ComponentNode }) {
         {groups.map((g) => (
           <option key={g.id} value={g.id}>
             {g.id}
+          </option>
+        ))}
+      </select>
+    </FieldRow>
+  );
+}
+
+function StageSelectField({ flow }: { flow: FlowNode }) {
+  const stages = useFlowStore(selectStages);
+  const setSelection = useFlowStore((s) => s.setSelection);
+  const currentValue = flow.stage ?? '';
+  const onChange = (next: string) => {
+    const targetName = next === '' ? null : next;
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const updated = moveFlowToStage(sourceText, ast, flow.name, targetName);
+    if (updated !== sourceText) {
+      setSourceText(updated);
+      // Keep this flow as the selection so the inspector stays put.
+      setSelection(flow.name, 'flow');
+    }
+  };
+  return (
+    <FieldRow label="Stage">
+      <select
+        value={currentValue}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={stages.length === 0 && !flow.stage}
+        style={{ ...textInputStyle, padding: '5px 6px' }}
+      >
+        <option value="">(no stage)</option>
+        {stages.map((s) => (
+          <option key={s.name} value={s.name}>
+            {s.name}
           </option>
         ))}
       </select>
@@ -518,6 +553,7 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
           onCommit={commitRename}
         />
       </FieldRow>
+      <StageSelectField flow={flow} />
       <FieldRow label="Data label">
         <CommitTextInput
           initial={flow.data ?? ''}
