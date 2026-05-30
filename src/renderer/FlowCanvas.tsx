@@ -123,18 +123,36 @@ function hitTestFrame(
 }
 
 /** Find the deepest-nested package whose bounding box contains (x, y) in
- *  diagram coords. Returns undefined if the point sits outside every group. */
+ *  diagram coords. Returns undefined if the point sits outside every group.
+ *  Groups that are collapsed or hidden inside a collapsed ancestor are excluded
+ *  so right-clicking in visually-empty space never auto-assigns to an invisible
+ *  package. */
 function findInnermostContainingGroup(
   layout: import('../types').LayoutResult,
   x: number,
   y: number,
+  collapsedGroups: Set<string> = new Set(),
 ): string | undefined {
-  const candidates = layout.groups.filter(
-    (g) => x >= g.x && x <= g.x + g.width && y >= g.y && y <= g.y + g.height,
-  );
-  if (candidates.length === 0) return undefined;
   const parentOf = new Map<string, string | undefined>();
   for (const g of layout.groups) parentOf.set(g.id, g.parentGroup);
+
+  const isHidden = (id: string): boolean => {
+    let cursor = parentOf.get(id);
+    while (cursor !== undefined) {
+      if (collapsedGroups.has(cursor)) return true;
+      cursor = parentOf.get(cursor);
+    }
+    return false;
+  };
+
+  const candidates = layout.groups.filter(
+    (g) =>
+      !collapsedGroups.has(g.id) &&
+      !isHidden(g.id) &&
+      x >= g.x && x <= g.x + g.width &&
+      y >= g.y && y <= g.y + g.height,
+  );
+  if (candidates.length === 0) return undefined;
   const depthOf = (id: string): number => {
     let d = 0;
     let cursor = parentOf.get(id);
@@ -534,8 +552,16 @@ export default function FlowCanvas() {
         const currentLayout = useFlowStore.getState().layout;
         if (!ast) return;
         const id = generateUniqueComponentId(ast);
+        const collapsedGroups = currentLayout
+          ? computeCollapsedGroups(
+              currentLayout,
+              t.transform.scale,
+              useFlowStore.getState().collapseThresholdPx,
+              useFlowStore.getState().manualCollapsed,
+            )
+          : new Set<string>();
         const parentGroupId = currentLayout
-          ? findInnermostContainingGroup(currentLayout, coords.x, coords.y)
+          ? findInnermostContainingGroup(currentLayout, coords.x, coords.y, collapsedGroups)
           : undefined;
         const updated = createComponent(sourceText, ast, {
           id,
