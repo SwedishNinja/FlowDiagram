@@ -57,8 +57,13 @@ export interface FlowStore {
    *  is the primary (used as `selectedId` for single-kind inspectors). */
   selectedIds: string[];
   selectionKind: 'component' | 'connection' | 'flow' | 'group' | 'stage' | null;
-  /** Replace the selection with a single entity. */
+  /** History stack for back-navigation in the properties panel. */
+  selectionHistory: Array<{ id: string; kind: 'component' | 'connection' | 'flow' | 'group' | 'stage' }>;
+  /** Replace the selection with a single entity. Pushes the previous single
+   *  selection onto selectionHistory so the user can navigate back. */
   setSelection: (id: string, kind: 'component' | 'connection' | 'flow' | 'group' | 'stage') => void;
+  /** Restore the previous selection from history without pushing to history. */
+  navigateBack: () => void;
   /** Extend the selection. If the kind doesn't match the current set, the
    *  selection is replaced instead. If the id is already in the set, it
    *  is removed (toggle behavior). */
@@ -176,7 +181,22 @@ export const useFlowStore = create<FlowStore>()(
 
     selectedIds: [],
     selectionKind: null,
-    setSelection: (id, kind) => set({ selectedIds: [id], selectionKind: kind }),
+    selectionHistory: [],
+    setSelection: (id, kind) => set((s) => {
+      const prev = s.selectionKind && s.selectedIds.length === 1
+        ? { id: s.selectedIds[0]!, kind: s.selectionKind }
+        : null;
+      const history = prev
+        ? [...s.selectionHistory.slice(-49), prev]
+        : s.selectionHistory;
+      return { selectedIds: [id], selectionKind: kind, selectionHistory: history };
+    }),
+    navigateBack: () => set((s) => {
+      if (s.selectionHistory.length === 0) return s;
+      const history = s.selectionHistory.slice(0, -1);
+      const prev = s.selectionHistory[s.selectionHistory.length - 1]!;
+      return { selectedIds: [prev.id], selectionKind: prev.kind, selectionHistory: history };
+    }),
     addToSelection: (id, kind) => set((s) => {
       // Switching kinds always replaces — mixed-kind selections aren't supported.
       if (s.selectionKind !== kind || s.selectedIds.length === 0) {
@@ -191,7 +211,7 @@ export const useFlowStore = create<FlowStore>()(
       }
       return { selectedIds: [...s.selectedIds, id], selectionKind: s.selectionKind };
     }),
-    clearSelection: () => set({ selectedIds: [], selectionKind: null }),
+    clearSelection: () => set({ selectedIds: [], selectionKind: null, selectionHistory: [] }),
 
     toolMode: 'select',
     setToolMode: (toolMode) => set({ toolMode }),

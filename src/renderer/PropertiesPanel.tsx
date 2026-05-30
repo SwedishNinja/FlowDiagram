@@ -146,6 +146,10 @@ export default function PropertiesPanel() {
 // ── Section headers ───────────────────────────────────────────────────────────
 
 function SectionHeader({ label }: { label: string }) {
+  const history = useFlowStore((s) => s.selectionHistory);
+  const navigateBack = useFlowStore((s) => s.navigateBack);
+  const canGoBack = history.length > 0;
+
   return (
     <div
       className="fd-grain"
@@ -154,9 +158,23 @@ function SectionHeader({ label }: { label: string }) {
         background: 'var(--surface-1)',
         borderBottom: '1px solid var(--line)',
         flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
       }}
     >
-      <span className="fd-label">{label}</span>
+      <span className="fd-label" style={{ flex: 1 }}>{label}</span>
+      {canGoBack && (
+        <button
+          type="button"
+          onClick={navigateBack}
+          className="fd-btn fd-btn--ghost"
+          title={`Back to ${history[history.length - 1]!.id}`}
+          style={{ height: 20, padding: '0 6px', fontSize: 'var(--fs-micro)', gap: 3 }}
+        >
+          ← Back
+        </button>
+      )}
     </div>
   );
 }
@@ -486,6 +504,12 @@ function ConnectionForm({ conn }: { conn: ConnectionNode }) {
           onChange={(next) => commit(arrowUpdatesFor(next))}
         />
       </Field>
+      <Field label="Components">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <NavRow id={conn.source} kind="component" label="source" onNavigate={setSelection} />
+          <NavRow id={conn.target} kind="component" label="target" onNavigate={setSelection} />
+        </div>
+      </Field>
       {flowsOnThis.length > 0 && (
         <Field label="Flows">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -508,8 +532,10 @@ function ConnectionForm({ conn }: { conn: ConnectionNode }) {
 
 function FlowForm({ flow }: { flow: FlowNode }) {
   const stages = useFlowStore(selectStages);
+  const conns = useFlowStore(selectConns);
   const setSelection = useFlowStore((s) => s.setSelection);
   const clearSelection = useFlowStore((s) => s.clearSelection);
+  const conn = conns.find((c) => c.id === flow.connection);
 
   const commit = (updates: Parameters<typeof updateFlow>[3]) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
@@ -555,6 +581,14 @@ function FlowForm({ flow }: { flow: FlowNode }) {
           </>
         )}
       </div>
+      {conn && (
+        <Field label="Components">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <NavRow id={conn.source} kind="component" label="source" onNavigate={setSelection} />
+            <NavRow id={conn.target} kind="component" label="target" onNavigate={setSelection} />
+          </div>
+        </Field>
+      )}
 
       <Field label="Name">
         <TextInput initial={flow.name} placeholder="flow identifier" onCommit={commitRename} />
@@ -832,6 +866,46 @@ function StageForm({ stage }: { stage: StageNode }) {
 
       <DangerButton onClick={cascadeDelete}>Delete stage</DangerButton>
     </>
+  );
+}
+
+// ── NavRow — clickable entity link used in connection/flow forms ──────────────
+
+type NavKind = 'component' | 'connection' | 'flow' | 'group' | 'stage';
+
+function NavRow({
+  id,
+  kind,
+  label,
+  onNavigate,
+}: {
+  id: string;
+  kind: NavKind;
+  label: string;
+  onNavigate: (id: string, kind: NavKind) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(id, kind)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 6px',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--r-sm)',
+        background: 'var(--surface-3)',
+        cursor: 'pointer',
+        textAlign: 'left',
+        fontFamily: 'inherit',
+        width: '100%',
+      }}
+    >
+      <span style={{ color: 'var(--ink-5)', fontSize: 'var(--fs-micro)', flexShrink: 0, minWidth: 32 }}>{label}</span>
+      <span style={{ color: 'var(--ink-2)', fontSize: 'var(--fs-xs)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{id}</span>
+      <span style={{ color: 'var(--ink-5)', fontSize: 'var(--fs-micro)', flexShrink: 0 }}>→</span>
+    </button>
   );
 }
 
