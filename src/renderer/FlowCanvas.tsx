@@ -24,13 +24,8 @@ import {
   renameComponent,
   updateConnection,
 } from '../parser/textMutations';
-import Inspector from './Inspector';
 import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
-import StagesPanel from './StagesPanel';
-import type { LayoutNode, LayoutGroup, StageNode } from '../types';
-
-/** Stable empty array for ToolPalette's stages selector — see comment there. */
-const EMPTY_STAGES: ReadonlyArray<StageNode> = [];
+import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
 
@@ -1216,8 +1211,6 @@ export default function FlowCanvas() {
         }}
       />
       <ToolPalette activeTool={toolMode} />
-      <StagesPanel />
-      <Inspector />
       <MultiSelectPopover transform={computePopoverTransform()} />
       {renameOverlay && (
         <RenameInput
@@ -1233,10 +1226,6 @@ export default function FlowCanvas() {
 
 function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' }) {
   const setToolMode = useFlowStore((s) => s.setToolMode);
-  const ast = useFlowStore((s) => s.ast);
-  const stages = ast?.stages ?? EMPTY_STAGES;
-  const stagesPanelOpen = useFlowStore((s) => s.stagesPanelOpen);
-  const setStagesPanelOpen = useFlowStore((s) => s.setStagesPanelOpen);
 
   return (
     <div
@@ -1265,12 +1254,6 @@ function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' })
         onClick={() => setToolMode('add-component')}
         label="Add Component"
         shortcut="C"
-      />
-      <ToolButton
-        active={stagesPanelOpen}
-        onClick={() => setStagesPanelOpen(!stagesPanelOpen)}
-        label={`Stages${stages.length > 0 ? ` (${stages.length})` : ''}`}
-        shortcut=""
       />
     </div>
   );

@@ -8,6 +8,7 @@ import { exportGif, computeLayoutBounds, downloadBlob } from './renderer/exportG
 import { exportVideo, downloadVideoBlob } from './renderer/exportVideo';
 import { detectExportDuration } from './renderer/detectDuration';
 import { useElectronFile, isElectron } from './electron/useElectronFile';
+import PropertiesPanel from './renderer/PropertiesPanel';
 
 
 type ExportFormat = 'gif' | 'webm';
@@ -722,6 +723,8 @@ export default function App() {
           <FlowCanvas />
         </div>
       </div>
+
+      <PropertiesPanel />
     </div>
   );
 }
