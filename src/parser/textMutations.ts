@@ -785,8 +785,18 @@ export function createComponent(
     let anchorEnd = -1;
     let needsBlankLine = false;
 
+    // Anchor after the last TOP-LEVEL construct only. A package's whole block
+    // (group.loc) is considered, but components nested inside a package are
+    // skipped — otherwise, when the document's last component lives inside a
+    // package, the new top-level component would be inserted before the
+    // package's closing brace and silently absorbed into the package.
     for (const c of doc.components) {
+      if (c.parentGroup) continue;
       if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
+    }
+    for (const g of doc.groups) {
+      if (g.parentGroup) continue;
+      if (g.loc && g.loc.end > anchorEnd) anchorEnd = g.loc.end;
     }
 
     if (anchorEnd === -1) {
