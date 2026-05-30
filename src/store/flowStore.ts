@@ -160,7 +160,7 @@ export const useFlowStore = create<FlowStore>()(
     setShowExportFrame: (v) => set({ showExportFrame: v }),
     setExportFrame: (exportFrame) => set({ exportFrame }),
 
-    collapseThresholdPx: 200,
+    collapseThresholdPx: 1,
     setCollapseThresholdPx: (collapseThresholdPx) => set({ collapseThresholdPx }),
 
     manualCollapsed: {},

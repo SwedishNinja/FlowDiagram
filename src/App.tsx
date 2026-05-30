@@ -72,6 +72,7 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
   const [exportWidth, setExportWidth] = useState(1024);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('gif');
   const [exportPanelOpen, setExportPanelOpen] = useState(false);
+  const [viewPanelOpen, setViewPanelOpen] = useState(false);
 
   const canRender = !!ast && !!layout;
 
@@ -200,45 +201,51 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
 
       <span className="fd-div" />
 
-      {/* Speed segmented control */}
+      {/* Speed dropdown */}
       <span className="fd-label">Speed</span>
-      <div className="fd-seg" role="group" aria-label="Playback speed">
-        {SPEED_OPTIONS.map((speed) => (
-          <button
-            key={speed}
-            onClick={() => setSpeed(speed)}
-            data-active={playbackSpeed === speed}
-            title={`${speed}× playback`}
-          >
-            {speed}×
-          </button>
+      <select
+        value={playbackSpeed}
+        onChange={(e) => setSpeed(Number(e.target.value))}
+        aria-label="Playback speed"
+        style={{
+          height: 26,
+          padding: '0 6px',
+          background: 'var(--surface-3)',
+          color: 'var(--ink-2)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-sm)',
+          fontSize: 'var(--fs-xs)',
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          outline: 'none',
+        }}
+      >
+        {SPEED_OPTIONS.map((s) => (
+          <option key={s} value={s}>{s}×</option>
         ))}
-      </div>
+      </select>
 
       <span className="fd-div" />
 
-      {/* Global collapse threshold — overridden per-package via DSL `collapse_at:` */}
-      <label
-        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        className="fd-label"
-        title="Packages narrower than this on screen will collapse, hiding their contents and rerouting flows to the package border. Override per-package with `collapse_at: Npx` in the DSL."
-      >
-        <span>Collapse</span>
-        <input
-          type="number"
-          min={0}
-          max={2000}
-          step={10}
-          value={collapseThresholdPx}
-          onChange={(e) => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v) && v >= 0) setCollapseThresholdPx(v);
-          }}
-          className="fd-num"
-          aria-label="Global collapse threshold in CSS pixels"
-        />
-        <span style={{ color: 'var(--ink-5)' }}>px</span>
-      </label>
+      {/* View settings popover */}
+      <div style={{ position: 'relative' }}>
+        <button
+          onClick={() => setViewPanelOpen((v) => !v)}
+          className={`fd-btn ${viewPanelOpen ? 'fd-btn--toggle-on' : 'fd-btn--ghost'}`}
+          title="View settings"
+          aria-expanded={viewPanelOpen}
+        >
+          <Icon d="M12 3a1 1 0 1 0 0 2 1 1 0 0 0 0-2 M12 10a1 1 0 1 0 0 2 1 1 0 0 0 0-2 M12 17a1 1 0 1 0 0 2 1 1 0 0 0 0-2" size={12} />
+          View
+        </button>
+        {viewPanelOpen && (
+          <ViewPanel
+            collapseThresholdPx={collapseThresholdPx}
+            setCollapseThresholdPx={setCollapseThresholdPx}
+            onClose={() => setViewPanelOpen(false)}
+          />
+        )}
+      </div>
 
       {/* Spacer — pushes the file name + export cluster to the right */}
       <div style={{ flex: 1 }} />
@@ -345,6 +352,89 @@ function ClampedNumberInput({ label, min, max, step = 1, value, onChange }: Clam
         aria-label={label}
       />
     </label>
+  );
+}
+
+function ViewPanel({
+  collapseThresholdPx,
+  setCollapseThresholdPx,
+  onClose,
+}: {
+  collapseThresholdPx: number;
+  setCollapseThresholdPx: (v: number) => void;
+  onClose: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const boundary = panelRef.current?.parentElement;
+      if (boundary && !boundary.contains(e.target as Node)) onCloseRef.current();
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCloseRef.current(); };
+    const t = setTimeout(() => document.addEventListener('mousedown', onDocClick), 0);
+    document.addEventListener('keydown', onKey);
+    return () => { clearTimeout(t); document.removeEventListener('mousedown', onDocClick); document.removeEventListener('keydown', onKey); };
+  }, []);
+
+  return (
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label="View settings"
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 8px)',
+        left: 0,
+        width: '240px',
+        background: 'var(--surface-2)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--r-md)',
+        padding: '14px',
+        boxShadow: '0 12px 32px rgba(0,0,0,0.45)',
+        zIndex: 10,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+      }}
+    >
+      <div className="fd-label">View</div>
+      <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <span className="fd-label" style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--ink-3)', fontSize: 'var(--fs-xs)' }}>
+          Package collapse threshold (px)
+        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <input
+            type="number"
+            min={0}
+            max={2000}
+            step={10}
+            value={collapseThresholdPx}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10);
+              if (!isNaN(v) && v >= 0) setCollapseThresholdPx(v);
+            }}
+            className="fd-num"
+            style={{ width: '64px' }}
+            aria-label="Package collapse threshold in CSS pixels"
+          />
+          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--ink-5)' }}>px</span>
+          <button
+            type="button"
+            onClick={() => setCollapseThresholdPx(1)}
+            className="fd-btn fd-btn--ghost"
+            style={{ height: 22, padding: '0 8px', fontSize: 'var(--fs-micro)', marginLeft: 'auto' }}
+            title="Reset to default (1 px — effectively disabled)"
+          >
+            Reset
+          </button>
+        </div>
+        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
+          Packages narrower than this on-screen will collapse. Override per-package with <code style={{ color: 'var(--ink-4)' }}>collapse_at: Npx</code> in the DSL.
+        </span>
+      </label>
+    </div>
   );
 }
 
