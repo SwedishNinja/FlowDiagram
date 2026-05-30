@@ -8,7 +8,7 @@ import { exportGif, computeLayoutBounds, downloadBlob } from './renderer/exportG
 import { exportVideo, downloadVideoBlob } from './renderer/exportVideo';
 import { detectExportDuration } from './renderer/detectDuration';
 import { useElectronFile, isElectron } from './electron/useElectronFile';
-import FileSidebar from './electron/FileSidebar';
+
 
 type ExportFormat = 'gif' | 'webm';
 
@@ -524,7 +524,7 @@ export default function App() {
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const latestTextRef = useRef(useFlowStore.getState().sourceText);
 
-  const { currentPath, openFile, saveFile, newFile, loadFile } = useElectronFile();
+  const { currentPath, openFile, saveFile, newFile } = useElectronFile();
 
   // Editor panel width (in CSS px) — draggable splitter persists this.
   const [editorWidth, setEditorWidth] = useState<number>(() => {
@@ -603,10 +603,6 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: 'var(--surface-0)' }}>
-      {isElectron && (
-        <FileSidebar currentPath={currentPath} onOpenFile={loadFile} />
-      )}
-
       {/* Editor panel */}
       <div
         style={{

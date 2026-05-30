@@ -1,11 +1,33 @@
 import { useRef, useEffect } from 'react';
-import { EditorState, StateEffect, StateField } from '@codemirror/state';
+import { EditorState, StateEffect, StateField, EditorSelection } from '@codemirror/state';
 import { EditorView, Decoration, type DecorationSet, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { flowdiagramLanguageSupport } from './language/flowdiagramLanguage';
 import { useFlowStore } from '../store/flowStore';
+
+// --- Source range highlight (canvas click → editor) ---
+
+const setSourceHighlight = StateEffect.define<{ from: number; to: number } | null>();
+
+const sourceHighlightMark = Decoration.mark({ class: 'cm-sourceHighlight' });
+
+const sourceHighlightField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(deco, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setSourceHighlight)) {
+        if (effect.value === null) return Decoration.none;
+        const { from, to } = effect.value;
+        if (from >= to) return Decoration.none;
+        return Decoration.set([sourceHighlightMark.range(from, to)]);
+      }
+    }
+    return deco.map(tr.changes);
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
 
 // --- Error line highlighting ---
 
@@ -77,6 +99,11 @@ const darkTheme = EditorView.theme({
     borderLeft: '3px solid #dc2626',
     paddingLeft: '9px',
   },
+  '.cm-sourceHighlight': {
+    backgroundColor: '#3b82f633',
+    outline: '1px solid #3b82f666',
+    borderRadius: '2px',
+  },
   // Syntax colors
   '.ͼb': { color: '#60a5fa' },   // keyword - blue
   '.ͼc': { color: '#34d399' },   // string - green
@@ -126,6 +153,7 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
         ]),
         darkTheme,
         errorLineField,
+        sourceHighlightField,
         updateListener,
         EditorView.lineWrapping,
       ],
@@ -171,6 +199,41 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
         const errorLine = errors.length > 0 && errors[0]!.line > 0 ? errors[0]!.line : null;
         view.dispatch({ effects: setErrorLine.of(errorLine) });
       },
+    );
+  }, []);
+
+  // Highlight the source range of the selected canvas element
+  useEffect(() => {
+    return useFlowStore.subscribe(
+      (s) => ({ ids: s.selectedIds, kind: s.selectionKind, ast: s.ast }),
+      ({ ids, kind, ast }) => {
+        const view = viewRef.current;
+        if (!view) return;
+        if (ids.length === 0 || !kind || !ast) {
+          view.dispatch({ effects: setSourceHighlight.of(null) });
+          return;
+        }
+        const id = ids[0]!;
+        let loc: { start: number; end: number } | undefined;
+        if (kind === 'component') loc = ast.components.find((c) => c.id === id)?.loc;
+        else if (kind === 'connection') loc = ast.connections.find((c) => c.id === id)?.loc;
+        else if (kind === 'flow') loc = ast.flows.find((f) => f.name === id)?.loc;
+        else if (kind === 'group') loc = ast.groups.find((g) => g.id === id)?.loc;
+        else if (kind === 'stage') loc = ast.stages.find((s) => s.name === id)?.loc;
+        if (!loc) {
+          view.dispatch({ effects: setSourceHighlight.of(null) });
+          return;
+        }
+        const docLen = view.state.doc.length;
+        const from = Math.min(loc.start, docLen);
+        const to = Math.min(loc.end, docLen);
+        view.dispatch({
+          effects: setSourceHighlight.of({ from, to }),
+          selection: EditorSelection.range(from, to),
+          scrollIntoView: true,
+        });
+      },
+      { equalityFn: (a, b) => a.ids === b.ids && a.kind === b.kind && a.ast === b.ast },
     );
   }, []);
 
