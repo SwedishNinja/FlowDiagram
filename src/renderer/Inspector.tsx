@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
+  createFlow,
   deleteComponent,
   deleteConnection,
   deleteFlow,
   deleteGroup,
   deleteStage,
+  generateUniqueFlowName,
   moveComponent,
   moveFlowToStage,
   renameComponent,
@@ -248,6 +250,26 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
     clearSelection();
   };
 
+  // Add a flow on this connection with sensible defaults, then select it so
+  // the Flow inspector opens for tuning (rate, data, direction, stage, …).
+  const addFlow = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const name = generateUniqueFlowName(ast);
+    const next = createFlow(sourceText, ast, { name, connection: conn.id });
+    if (next !== sourceText) {
+      setSourceText(next);
+      setSelection(name, 'flow');
+    }
+  };
+
+  const removeFlow = (name: string) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteFlow(sourceText, ast, name);
+    if (next !== sourceText) setSourceText(next);
+  };
+
   const commitRename = (raw: string) => {
     const newId = raw.trim();
     if (newId === conn.id) return;
@@ -302,22 +324,34 @@ function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
           onChange={(next) => commit(arrowUpdatesFor(next))}
         />
       </FieldRow>
-      {flowsOnThis.length > 0 && (
-        <FieldRow label="Flows">
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {flowsOnThis.map((f) => (
+      <FieldRow label="Flows">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          {flowsOnThis.map((f) => (
+            <span key={f.name} style={{ display: 'inline-flex', alignItems: 'center' }}>
               <button
-                key={f.name}
                 type="button"
                 onClick={() => setSelection(f.name, 'flow')}
                 style={chipStyle}
+                title="Edit this flow"
               >
                 {f.name}
               </button>
-            ))}
-          </div>
-        </FieldRow>
-      )}
+              <button
+                type="button"
+                onClick={() => removeFlow(f.name)}
+                style={chipRemoveStyle}
+                title={`Remove flow "${f.name}"`}
+                aria-label={`Remove flow ${f.name}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <button type="button" onClick={addFlow} style={chipAddStyle} title="Add a flow on this connection">
+            + Add flow
+          </button>
+        </div>
+      </FieldRow>
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
           Delete connection{flowsOnThis.length > 0 ? ' + flows' : ''}
@@ -1043,8 +1077,31 @@ const chipStyle: React.CSSProperties = {
   font: '11px inherit',
   padding: '3px 8px',
   border: '1px solid #cbd5e1',
-  borderRadius: 12,
+  borderRadius: '12px 0 0 12px',
+  borderRight: 'none',
   background: '#f8fafc',
+  color: '#475569',
+  cursor: 'pointer',
+};
+
+// The "×" half of a flow chip, butted up against the chip's right edge.
+const chipRemoveStyle: React.CSSProperties = {
+  font: '11px inherit',
+  padding: '3px 7px',
+  border: '1px solid #cbd5e1',
+  borderRadius: '0 12px 12px 0',
+  background: '#f8fafc',
+  color: '#ef4444',
+  cursor: 'pointer',
+  lineHeight: 1,
+};
+
+const chipAddStyle: React.CSSProperties = {
+  font: '11px inherit',
+  padding: '3px 8px',
+  border: '1px dashed #94a3b8',
+  borderRadius: 12,
+  background: 'transparent',
   color: '#475569',
   cursor: 'pointer',
 };
