@@ -4,8 +4,11 @@ import {
   appendConnection,
   createComponent,
   createFlow,
+  createStage,
+  deleteStage,
   moveComponent,
   reorderFlowsInStage,
+  updateStage,
   deleteComponent,
   deleteConnection,
   deleteFlow,
@@ -740,6 +743,155 @@ package "G" as g {
     const doc = parseOk(src);
     const out = moveComponent(src, doc, 'db', 'g');
     expect(out).toContain('component "Db" as db #ff0000 <<store>>');
+    parseOk(out);
+  });
+});
+
+describe('createStage', () => {
+  it('appends a stage with no deps and no repeat', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@flow ping on ab
+  every: 1s
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createStage(src, doc, { name: 'warmup' });
+    expect(out).toMatch(/@stage warmup\n@end_stage/);
+    parseOk(out);
+  });
+
+  it('includes after deps and repeat when provided', () => {
+    const src = `@startuml
+@stage init
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createStage(src, doc, {
+      name: 'main',
+      after: ['init'],
+      repeat: true,
+    });
+    expect(out).toContain('@stage main');
+    expect(out).toContain('  after: init');
+    expect(out).toContain('  repeat: true');
+    parseOk(out);
+  });
+
+  it('appends after the last existing stage', () => {
+    const src = `@startuml
+@stage first
+@end_stage
+
+@stage second
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = createStage(src, doc, { name: 'third' });
+    expect(out.indexOf('@stage third')).toBeGreaterThan(out.indexOf('@stage second'));
+    parseOk(out);
+  });
+});
+
+describe('updateStage', () => {
+  const SRC = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage prep
+@end_stage
+
+@stage warmup
+  @flow ping on ab
+    every: 1s
+@end_stage
+
+@stage main
+  after: warmup
+  @flow do_thing on ab
+    every: 1s
+@end_stage
+@enduml
+`;
+
+  it('adds an after dep when none existed', () => {
+    const doc = parseOk(SRC);
+    const out = updateStage(SRC, doc, 'warmup', { after: ['prep'] });
+    expect(out).toMatch(/@stage warmup\n  after: prep\n  @flow ping/);
+    parseOk(out);
+  });
+
+  it('replaces an existing after dep list', () => {
+    const doc = parseOk(SRC);
+    const out = updateStage(SRC, doc, 'main', { after: ['prep', 'warmup'] });
+    expect(out).toContain('after: prep, warmup');
+    expect(out).not.toContain('after: warmup\n');
+    parseOk(out);
+  });
+
+  it('clears the after line when given an empty list', () => {
+    const doc = parseOk(SRC);
+    const out = updateStage(SRC, doc, 'main', { after: [] });
+    expect(out).not.toMatch(/^\s+after:/m);
+    parseOk(out);
+  });
+
+  it('sets and clears the repeat flag', () => {
+    const doc = parseOk(SRC);
+    const setRepeat = updateStage(SRC, doc, 'warmup', { repeat: true });
+    expect(setRepeat).toMatch(/@stage warmup\n  repeat: true/);
+    parseOk(setRepeat);
+    const cleared = updateStage(setRepeat, parseOk(setRepeat), 'warmup', { repeat: false });
+    expect(cleared).not.toContain('repeat: true');
+    parseOk(cleared);
+  });
+
+  it('leaves the @flow blocks untouched', () => {
+    const doc = parseOk(SRC);
+    const out = updateStage(SRC, doc, 'warmup', { after: ['prep'], repeat: true });
+    expect(out).toMatch(/@flow ping on ab\n\s+every: 1s/);
+    parseOk(out);
+  });
+});
+
+describe('deleteStage', () => {
+  it('removes the @stage block and cascades after: refs', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage prep
+@end_stage
+
+@stage warmup
+  after: prep
+  @flow ping on ab
+    every: 1s
+@end_stage
+
+@stage main
+  after: prep, warmup
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = deleteStage(src, doc, 'prep');
+    expect(out).not.toContain('@stage prep');
+    // Cascade: prep references gone.
+    expect(out).not.toContain('after: prep, warmup');
+    expect(out).not.toContain('after: prep\n');
+    // main's after list now contains just warmup.
+    expect(out).toContain('after: warmup');
+    // Other stages survive.
+    expect(out).toContain('@stage warmup');
+    expect(out).toContain('@stage main');
     parseOk(out);
   });
 });

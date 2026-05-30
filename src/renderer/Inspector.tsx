@@ -5,6 +5,7 @@ import {
   deleteConnection,
   deleteFlow,
   deleteGroup,
+  deleteStage,
   moveComponent,
   renameComponent,
   renameConnection,
@@ -16,6 +17,7 @@ import {
   updateConnection,
   updateFlow,
   updateGroup,
+  updateStage,
 } from '../parser/textMutations';
 import type { ComponentNode, ConnectionNode, FlowNode, FlowDocument, GroupNode, StageNode } from '../types';
 
@@ -23,8 +25,10 @@ import type { ComponentNode, ConnectionNode, FlowNode, FlowDocument, GroupNode, 
 // useFlowStore selector loops React 19's useSyncExternalStore equality check.
 const EMPTY_FLOWS: ReadonlyArray<FlowNode> = [];
 const EMPTY_GROUPS: ReadonlyArray<GroupNode> = [];
+const EMPTY_STAGES: ReadonlyArray<StageNode> = [];
 function selectFlows(s: { ast: FlowDocument | null }) { return s.ast?.flows ?? EMPTY_FLOWS; }
 function selectGroups(s: { ast: FlowDocument | null }) { return s.ast?.groups ?? EMPTY_GROUPS; }
+function selectStages(s: { ast: FlowDocument | null }) { return s.ast?.stages ?? EMPTY_STAGES; }
 
 /**
  * Floating right-side panel that surfaces editable fields for the currently
@@ -571,6 +575,8 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
 
 function StageInspector({ stage }: { stage: StageNode }) {
   const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
+  const allStages = useFlowStore(selectStages);
 
   const reorder = (from: number, to: number) => {
     if (to < 0 || to >= stage.flowNames.length || to === from) return;
@@ -583,13 +589,118 @@ function StageInspector({ stage }: { stage: StageNode }) {
     if (next !== sourceText) setSourceText(next);
   };
 
+  const commit = (updates: { after?: string[] | null; repeat?: boolean }) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = updateStage(sourceText, ast, stage.name, updates);
+    if (next !== sourceText) setSourceText(next);
+  };
+
+  const removeAfter = (dep: string) => {
+    commit({ after: stage.after.filter((x) => x !== dep) });
+  };
+  const addAfter = (dep: string) => {
+    if (!dep || stage.after.includes(dep) || dep === stage.name) return;
+    commit({ after: [...stage.after, dep] });
+  };
+
+  const cascadeDelete = () => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = deleteStage(sourceText, ast, stage.name);
+    if (next !== sourceText) setSourceText(next);
+    clearSelection();
+  };
+
+  const addableDeps = allStages
+    .map((s) => s.name)
+    .filter((n) => n !== stage.name && !stage.after.includes(n));
+
   return (
     <>
       <Header label="Stage" id={stage.name} />
-      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
-        {stage.repeat ? 'repeats' : 'runs once'}
-        {stage.after.length > 0 && ` · after ${stage.after.join(', ')}`}
-      </div>
+      <FieldRow label="Repeat">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={stage.repeat}
+            onChange={(e) => commit({ repeat: e.target.checked })}
+          />
+          <span style={{ color: '#475569', fontSize: 12 }}>
+            Restart after completion
+          </span>
+        </label>
+      </FieldRow>
+      <FieldRow label="After">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {stage.after.length === 0 ? (
+            <div style={{ fontSize: 11, color: '#94a3b8' }}>(no dependencies)</div>
+          ) : (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {stage.after.map((dep) => (
+                <span
+                  key={dep}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    padding: '2px 4px 2px 8px',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 12,
+                    background: '#f1f5f9',
+                    fontSize: 11,
+                    color: '#475569',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelection(dep, 'stage')}
+                    style={{
+                      ...inlineLinkStyle,
+                      textDecoration: 'none',
+                      color: '#475569',
+                      padding: 0,
+                    }}
+                  >
+                    {dep}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAfter(dep)}
+                    title={`Remove ${dep}`}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      padding: '0 4px',
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {addableDeps.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) addAfter(e.target.value);
+              }}
+              style={{ ...textInputStyle, padding: '5px 6px' }}
+            >
+              <option value="">+ Add dependency…</option>
+              {addableDeps.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      </FieldRow>
       <FieldRow label="Flows (in order)">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           {stage.flowNames.length === 0 && (
@@ -643,6 +754,11 @@ function StageInspector({ stage }: { stage: StageNode }) {
           ))}
         </div>
       </FieldRow>
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <button type="button" onClick={cascadeDelete} style={dangerButtonStyle}>
+          Delete stage
+        </button>
+      </div>
     </>
   );
 }

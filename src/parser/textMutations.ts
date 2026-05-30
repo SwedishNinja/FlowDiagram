@@ -127,6 +127,191 @@ export function generateUniqueGroupId(doc: FlowDocument, prefix: string = 'group
   return generateUniqueId(doc, prefix);
 }
 
+/** Generate a collision-free `stage{N}` name (or any other prefix). */
+export function generateUniqueStageName(doc: FlowDocument, prefix: string = 'stage'): string {
+  // Stage names share the same alias namespace as other IDs.
+  const taken = new Set<string>([
+    ...doc.components.map((c) => c.id),
+    ...doc.groups.map((g) => g.id),
+    ...doc.connections.map((c) => c.id),
+    ...doc.flows.map((f) => f.name),
+    ...doc.stages.map((s) => s.name),
+  ]);
+  let n = 1;
+  while (taken.has(`${prefix}${n}`)) n++;
+  return `${prefix}${n}`;
+}
+
+/**
+ * Append a new `@stage … @end_stage` block. Insertion order:
+ *   1. After the last existing @stage block.
+ *   2. After the last root-level flow (with a blank line).
+ *   3. After the last connection (with a blank line).
+ *   4. Before @positions / @enduml.
+ */
+export function createStage(
+  text: string,
+  doc: FlowDocument,
+  opts: { name: string; after?: string[]; repeat?: boolean },
+): string {
+  const after = opts.after ?? [];
+  const repeat = opts.repeat ?? false;
+
+  const lines: string[] = [`@stage ${opts.name}`];
+  if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
+  if (repeat) lines.push(`  repeat: true`);
+  lines.push(`@end_stage`);
+  const block = lines.join('\n') + '\n';
+
+  let anchorEnd = -1;
+  let needsBlankLine = false;
+
+  for (const s of doc.stages) {
+    if (s.loc && s.loc.end > anchorEnd) anchorEnd = s.loc.end;
+  }
+  if (anchorEnd === -1) {
+    for (const f of doc.flows) {
+      if (f.stage) continue;
+      if (f.loc && f.loc.end > anchorEnd) anchorEnd = f.loc.end;
+    }
+    if (anchorEnd !== -1) needsBlankLine = true;
+  }
+  if (anchorEnd === -1) {
+    for (const c of doc.connections) {
+      if (c.loc && c.loc.end > anchorEnd) anchorEnd = c.loc.end;
+    }
+    if (anchorEnd !== -1) needsBlankLine = true;
+  }
+
+  if (anchorEnd === -1) {
+    const positionsIdx = text.indexOf('@positions');
+    const endumlIdx = text.indexOf('@enduml');
+    const candidates = [positionsIdx, endumlIdx].filter((i) => i !== -1);
+    if (candidates.length === 0) {
+      return text + (text.endsWith('\n') ? '' : '\n') + block;
+    }
+    const before = Math.min(...candidates);
+    return text.slice(0, before) + block + '\n' + text.slice(before);
+  }
+
+  let pos = anchorEnd;
+  if (text[pos - 1] !== '\n') {
+    if (text[pos] === '\r') pos++;
+    if (text[pos] === '\n') pos++;
+  }
+  const insertion =
+    pos === anchorEnd && text[pos - 1] !== '\n'
+      ? '\n' + block
+      : (needsBlankLine ? '\n' : '') + block;
+  return text.slice(0, pos) + insertion + text.slice(pos);
+}
+
+/**
+ * Update a stage's `after:` dependency list and/or `repeat:` flag. The
+ * `@flow` blocks inside the stage are untouched — only the property lines
+ * between the header and the first @flow (or @end_stage if empty) move.
+ *
+ * Pass undefined for a field to leave it alone. Pass null/empty-array for
+ * `after` to clear the after line; pass `false` for `repeat` to remove the
+ * repeat line.
+ */
+export function updateStage(
+  text: string,
+  doc: FlowDocument,
+  stageName: string,
+  updates: { after?: string[] | null; repeat?: boolean },
+): string {
+  const stage = doc.stages.find((s) => s.name === stageName);
+  if (!stage?.loc) return text;
+
+  // Locate the source range for the stage's property block: starts on the
+  // line after the @stage header, ends right before the first @flow line OR
+  // the @end_stage line (whichever comes first).
+  const headerNewline = text.indexOf('\n', stage.loc.start);
+  if (headerNewline === -1 || headerNewline > stage.loc.end) return text;
+  const propsStart = headerNewline + 1;
+
+  // Find where the property block ends: first @flow or @end_stage inside
+  // this stage. Scan slice to avoid escaping the block.
+  const tail = text.slice(propsStart, stage.loc.end);
+  const flowOffsetRel = tail.search(/^\s*@flow\b/m);
+  const endOffsetRel = tail.search(/^\s*@end_stage\b/m);
+  let propsEndRel = -1;
+  if (flowOffsetRel !== -1 && endOffsetRel !== -1) {
+    propsEndRel = Math.min(flowOffsetRel, endOffsetRel);
+  } else if (flowOffsetRel !== -1) propsEndRel = flowOffsetRel;
+  else if (endOffsetRel !== -1) propsEndRel = endOffsetRel;
+  if (propsEndRel === -1) return text;
+  const propsEnd = propsStart + propsEndRel;
+
+  // Determine stage indent so the rewritten property lines match.
+  let indentEnd = stage.loc.start;
+  while (
+    indentEnd < text.length &&
+    (text[indentEnd] === ' ' || text[indentEnd] === '\t')
+  ) {
+    indentEnd++;
+  }
+  const headerIndent = text.slice(stage.loc.start, indentEnd);
+  const bodyIndent = headerIndent + '  ';
+
+  // Existing values, applied with the updates.
+  const after =
+    updates.after === undefined ? stage.after : updates.after ?? [];
+  const repeat =
+    updates.repeat === undefined ? stage.repeat : updates.repeat;
+
+  const newLines: string[] = [];
+  if (after.length > 0) newLines.push(`${bodyIndent}after: ${after.join(', ')}`);
+  if (repeat) newLines.push(`${bodyIndent}repeat: true`);
+  const newProps = newLines.length === 0 ? '' : newLines.join('\n') + '\n';
+
+  return text.slice(0, propsStart) + newProps + text.slice(propsEnd);
+}
+
+/**
+ * Cascade-delete an `@stage` block and remove the stage from any other
+ * stage's `after:` reference list. Flows declared inside the deleted block
+ * disappear with it.
+ */
+export function deleteStage(text: string, doc: FlowDocument, stageName: string): string {
+  const stage = doc.stages.find((s) => s.name === stageName);
+  if (!stage?.loc) return text;
+
+  const edits: Edit[] = [deleteEdit(text, stage.loc)];
+
+  for (const other of doc.stages) {
+    if (other.name === stageName || !other.loc) continue;
+    if (!other.after.includes(stageName)) continue;
+    // Rewrite this stage's `after:` line to drop the deleted dep.
+    const headerNewline = text.indexOf('\n', other.loc.start);
+    if (headerNewline === -1) continue;
+    const slice = text.slice(headerNewline + 1, other.loc.end);
+    const m = slice.match(/^([ \t]*after:[ \t]*)([^\n]+)([ \t]*)$/m);
+    if (!m || m.index === undefined) continue;
+    const lineStart = headerNewline + 1 + m.index;
+    const valueStart = lineStart + m[1]!.length;
+    const oldVal = m[2]!;
+    const newVal = oldVal
+      .split(/\s*,\s*/)
+      .filter((x) => x !== stageName)
+      .join(', ');
+    if (newVal === oldVal) continue;
+    if (newVal === '') {
+      // Drop the entire after: line including its trailing newline.
+      const lineEnd = lineStart + m[0]!.length;
+      let end = lineEnd;
+      if (text[end] === '\r') end++;
+      if (text[end] === '\n') end++;
+      edits.push({ start: lineStart, end, replacement: '' });
+    } else {
+      edits.push({ start: valueStart, end: valueStart + oldVal.length, replacement: newVal });
+    }
+  }
+
+  return applyEdits(text, edits);
+}
+
 /**
  * Move an existing component into a different package (or to the document
  * root when targetGroupId is null). The component's original source slice
