@@ -579,6 +579,141 @@ export function findConnectionBetween(
 
 type ConnectionNodeWithLoc = FlowDocument['connections'][number];
 
+/** One leg of a route through the connection graph. `direction` is relative to
+ *  the connection: `forward` = source→target, `reverse` = target→source. */
+export interface FlowPathHop {
+  connectionId: string;
+  from: string;
+  to: string;
+  direction: 'forward' | 'reverse';
+}
+
+/**
+ * Breadth-first shortest route (fewest hops) from `start` to `end` over the
+ * UNDIRECTED graph of existing connections — a flow can traverse a connection
+ * either way, so a hop running against the arrow becomes a reverse flow.
+ *
+ * BFS guarantees the minimum hop count; adjacency is built in connection
+ * declaration order and the queue is FIFO, so ties resolve deterministically
+ * (the shortest route, not merely *a* route). Self-loops are ignored. Returns
+ * `null` when the two components are not connected, or `[]` when they coincide.
+ */
+export function findShortestComponentPath(
+  doc: FlowDocument,
+  start: string,
+  end: string,
+): FlowPathHop[] | null {
+  if (start === end) return [];
+
+  const adj = new Map<string, FlowPathHop[]>();
+  const addEdge = (from: string, hop: FlowPathHop) => {
+    let list = adj.get(from);
+    if (!list) { list = []; adj.set(from, list); }
+    list.push(hop);
+  };
+  for (const conn of doc.connections) {
+    if (conn.source === conn.target) continue; // skip self-loops
+    addEdge(conn.source, { connectionId: conn.id, from: conn.source, to: conn.target, direction: 'forward' });
+    addEdge(conn.target, { connectionId: conn.id, from: conn.target, to: conn.source, direction: 'reverse' });
+  }
+
+  // BFS, remembering the hop that first reached each node.
+  const prev = new Map<string, FlowPathHop>();
+  const visited = new Set<string>([start]);
+  const queue: string[] = [start];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (node === end) break;
+    for (const hop of adj.get(node) ?? []) {
+      if (visited.has(hop.to)) continue;
+      visited.add(hop.to);
+      prev.set(hop.to, hop);
+      queue.push(hop.to);
+    }
+  }
+  if (!visited.has(end)) return null;
+
+  // Walk predecessors back from `end` to `start`, then reverse.
+  const hops: FlowPathHop[] = [];
+  let cur = end;
+  while (cur !== start) {
+    const hop = prev.get(cur);
+    if (!hop) return null; // unreachable in practice; guards against bad state
+    hops.push(hop);
+    cur = hop.from;
+  }
+  hops.reverse();
+  return hops;
+}
+
+/**
+ * Create a relay: one @flow per hop of a route, chained so each fires when the
+ * previous arrives (`after:`). The first hop optionally carries a rate
+ * (`continuous`) to drive the whole relay; the rest are purely dependent. All
+ * blocks are inserted at once (root level) to avoid stale-offset issues from
+ * sequential edits. Returns the new text plus the generated flow names in order.
+ */
+export function createFlowChain(
+  text: string,
+  doc: FlowDocument,
+  opts: {
+    hops: FlowPathHop[];
+    namePrefix?: string;
+    data?: string | null;
+    color?: string | null;
+    intervalMs?: number;
+    traverseTimeMs?: number;
+    /** When true (default), the first hop repeats on `intervalMs`. */
+    continuous?: boolean;
+  },
+): { text: string; flowNames: string[] } {
+  if (opts.hops.length === 0) return { text, flowNames: [] };
+
+  const prefix =
+    opts.namePrefix && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(opts.namePrefix)
+      ? opts.namePrefix
+      : 'relay';
+  const continuous = opts.continuous ?? true;
+
+  // Reserve N collision-free names up front (same namespace as generateUniqueId).
+  const taken = new Set<string>([
+    ...doc.components.map((c) => c.id),
+    ...doc.groups.map((g) => g.id),
+    ...doc.connections.map((c) => c.id),
+    ...doc.flows.map((f) => f.name),
+  ]);
+  const flowNames: string[] = [];
+  let n = 1;
+  for (let i = 0; i < opts.hops.length; i++) {
+    while (taken.has(`${prefix}${n}`)) n++;
+    const name = `${prefix}${n}`;
+    taken.add(name);
+    flowNames.push(name);
+    n++;
+  }
+
+  const allLines: string[] = [];
+  opts.hops.forEach((hop, i) => {
+    const isFirst = i === 0;
+    const flowLines = buildFlowLines({
+      name: flowNames[i]!,
+      connection: hop.connectionId,
+      data: opts.data ?? null,
+      color: opts.color ?? null,
+      // Only the first hop carries a rate; later hops fire once per arrival.
+      hasRate: isFirst && continuous,
+      intervalMs: opts.intervalMs ?? 1000,
+      traverseTimeMs: opts.traverseTimeMs ?? 1500,
+      direction: hop.direction,
+      after: isFirst ? [] : [flowNames[i - 1]!],
+    });
+    if (i > 0) allLines.push(''); // blank line between blocks
+    allLines.push(...flowLines);
+  });
+
+  return { text: insertFlowLines(text, doc, allLines, null), flowNames };
+}
+
 /**
  * Append a new @flow block. Optional fields default to a sensible canonical
  * flow: every 1000ms, 1500ms traverse time, forward direction.
@@ -608,15 +743,30 @@ export function createFlow(
     stage?: string | null;
   },
 ): string {
+  const lines = buildFlowLines(opts);
+  return insertFlowLines(text, doc, lines, opts.stage ?? null);
+}
+
+/** Assemble the unindented `@flow … ` block lines for a single flow. */
+function buildFlowLines(opts: {
+  name: string;
+  connection: string;
+  data?: string | null;
+  color?: string | null;
+  intervalMs?: number;
+  hasRate?: boolean;
+  traverseTimeMs?: number;
+  direction?: 'forward' | 'reverse';
+  startDelayMs?: number;
+  after?: string[];
+}): string[] {
   const intervalMs = opts.intervalMs ?? 1000;
   const hasRate = opts.hasRate ?? true;
   const traverseTimeMs = opts.traverseTimeMs ?? 1500;
   const direction = opts.direction ?? 'forward';
   const startDelayMs = opts.startDelayMs ?? 0;
   const after = opts.after ?? [];
-  const targetStage = opts.stage ?? null;
 
-  // Build the unindented block; targetStage path adds its own indent.
   const lines: string[] = [`@flow ${opts.name} on ${opts.connection}`];
   if (opts.data) lines.push(`  data: "${opts.data}"`);
   if (hasRate) lines.push(`  every: ${Math.round(intervalMs)}ms`);
@@ -625,7 +775,20 @@ export function createFlow(
   if (direction === 'reverse') lines.push(`  direction: reverse`);
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
   if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
+  return lines;
+}
 
+/**
+ * Insert one or more @flow blocks (passed as a pre-joined `lines` array, with
+ * `''` entries acting as blank separators between blocks) at the correct
+ * anchor — inside the named stage, or at root level.
+ */
+function insertFlowLines(
+  text: string,
+  doc: FlowDocument,
+  lines: string[],
+  targetStage: string | null,
+): string {
   if (targetStage) {
     return insertFlowInStage(text, doc, targetStage, lines);
   }
@@ -714,7 +877,7 @@ function insertFlowInStage(
   const stageIndent = text.slice(stage.loc.start, stageIndentEnd);
   const bodyIndent = stageIndent + '  ';
 
-  const indented = bodyLines.map((l) => bodyIndent + l).join('\n') + '\n';
+  const indented = bodyLines.map((l) => (l === '' ? '' : bodyIndent + l)).join('\n') + '\n';
   return text.slice(0, endLineStart) + indented + text.slice(endLineStart);
 }
 

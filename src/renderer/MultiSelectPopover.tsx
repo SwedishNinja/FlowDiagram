@@ -2,11 +2,14 @@ import { useEffect, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 import {
   createFlow,
+  createFlowChain,
   findConnectionBetween,
+  findShortestComponentPath,
   generateUniqueFlowName,
   generateUniqueGroupId,
   wrapInPackage,
 } from '../parser/textMutations';
+import type { FlowPathHop } from '../parser/textMutations';
 import type { LayoutNode } from '../types';
 
 /**
@@ -110,13 +113,19 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
   }, [match?.connection.id, match?.reverseToMatchOrder]);
 
   if (!match) {
+    // No direct connection — see if the two are linked indirectly and offer a
+    // relay along the shortest route through existing connections.
+    const path = findShortestComponentPath(ast, firstId, secondId);
+    if (path && path.length > 0) {
+      return <RelayCreateCard firstId={firstId} hops={path} />;
+    }
     return (
       <Card>
         <Header label="No route" />
         <p style={{ fontSize: 12, color: '#475569', margin: '0 0 10px' }}>
-          No connection exists between <code style={codeStyle}>{firstId}</code> and{' '}
-          <code style={codeStyle}>{secondId}</code>. Drag a handle from one to the other to
-          create a connection first.
+          No path exists between <code style={codeStyle}>{firstId}</code> and{' '}
+          <code style={codeStyle}>{secondId}</code> through existing connections. Drag a handle
+          from one to the other to create a connection first.
         </p>
         <button type="button" onClick={clearSelection} style={primaryButtonStyle}>
           Dismiss
@@ -257,6 +266,117 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
       <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
         <button type="button" onClick={create} style={primaryButtonStyle}>
           Create flow
+        </button>
+        <button type="button" onClick={clearSelection} style={smallButtonStyle}>
+          Cancel
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Shown when the two selected components have no direct connection but ARE
+ * linked through a chain of existing connections. Creates a relay: one flow
+ * per hop, each firing when the previous arrives, tracing the shortest route.
+ */
+function RelayCreateCard({
+  firstId,
+  hops,
+}: {
+  firstId: string;
+  hops: FlowPathHop[];
+}) {
+  const ast = useFlowStore((s) => s.ast)!;
+  const setSelection = useFlowStore((s) => s.setSelection);
+  const clearSelection = useFlowStore((s) => s.clearSelection);
+
+  const [prefix, setPrefix] = useState('relay');
+  const [data, setData] = useState('');
+  const [continuous, setContinuous] = useState(true);
+  const [everyMs, setEveryMs] = useState(1000);
+  const [traverseMs, setTraverseMs] = useState(1500);
+
+  // Route as display names: start node followed by each hop's destination.
+  const nameOf = (id: string) => ast.components.find((c) => c.id === id)?.displayName ?? id;
+  const routeIds = [firstId, ...hops.map((h) => h.to)];
+
+  const create = () => {
+    const trimmedPrefix = prefix.trim();
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedPrefix)) return;
+    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
+    if (!latestAst) return;
+    const { text: updated, flowNames } = createFlowChain(sourceText, latestAst, {
+      hops,
+      namePrefix: trimmedPrefix,
+      data: data.trim() ? data.trim() : null,
+      continuous,
+      intervalMs: everyMs,
+      traverseTimeMs: traverseMs,
+    });
+    if (updated !== sourceText) setSourceText(updated);
+    if (flowNames[0]) setSelection(flowNames[0], 'flow');
+  };
+
+  return (
+    <Card>
+      <Header label={`Relay flow · ${hops.length} hops`} />
+      <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8, lineHeight: 1.5 }}>
+        {routeIds.map((id, i) => (
+          <span key={`${id}-${i}`}>
+            {i > 0 && <span style={{ color: '#94a3b8' }}> → </span>}
+            <code style={codeStyle}>{nameOf(id)}</code>
+          </span>
+        ))}
+      </div>
+      <FieldRow label="Name prefix">
+        <input
+          type="text"
+          value={prefix}
+          onChange={(e) => setPrefix(e.target.value)}
+          style={textInputStyle}
+        />
+      </FieldRow>
+      <FieldRow label="Data label">
+        <input
+          type="text"
+          value={data}
+          placeholder="(none)"
+          onChange={(e) => setData(e.target.value)}
+          style={textInputStyle}
+        />
+      </FieldRow>
+      <FieldRow label="Traverse time per hop (ms)">
+        <input
+          type="number"
+          min={50}
+          value={traverseMs}
+          onChange={(e) => setTraverseMs(Math.max(50, Number(e.target.value) || 50))}
+          style={textInputStyle}
+        />
+      </FieldRow>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <input
+          type="checkbox"
+          checked={continuous}
+          onChange={(e) => setContinuous(e.target.checked)}
+        />
+        <span style={{ color: '#475569', fontSize: 12 }}>Re-spawn on interval</span>
+      </label>
+      {continuous && (
+        <FieldRow label="Every (ms)">
+          <input
+            type="number"
+            min={30}
+            value={everyMs}
+            onChange={(e) => setEveryMs(Math.max(30, Number(e.target.value) || 30))}
+            style={textInputStyle}
+          />
+        </FieldRow>
+      )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <button type="button" onClick={create} style={primaryButtonStyle}>
+          Create relay
         </button>
         <button type="button" onClick={clearSelection} style={smallButtonStyle}>
           Cancel

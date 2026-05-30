@@ -4,7 +4,9 @@ import {
   appendConnection,
   createComponent,
   createFlow,
+  createFlowChain,
   createStage,
+  findShortestComponentPath,
   deleteStage,
   moveComponent,
   moveFlowToStage,
@@ -1087,6 +1089,131 @@ c -> a as ca
   it('returns null when no connection exists either way', () => {
     const doc = parseOk(src);
     expect(findConnectionBetween(doc, 'b', 'c')).toBe(null);
+  });
+});
+
+describe('findShortestComponentPath', () => {
+  const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+component "D" as d
+component "X" as x
+
+a -> b as ab
+b -> c as bc
+a -> c as ac
+c -> d as cd
+@enduml
+`;
+  it('returns a single hop for directly connected components', () => {
+    const doc = parseOk(src);
+    const path = findShortestComponentPath(doc, 'a', 'b');
+    expect(path?.map((h) => h.connectionId)).toEqual(['ab']);
+    expect(path?.[0]?.direction).toBe('forward');
+  });
+  it('finds a multi-hop relay between non-adjacent components', () => {
+    const doc = parseOk(src);
+    const path = findShortestComponentPath(doc, 'a', 'd');
+    // a -> c (direct, via ac) then c -> d, NOT a->b->c->d.
+    expect(path?.map((h) => h.connectionId)).toEqual(['ac', 'cd']);
+    expect(path?.map((h) => h.to)).toEqual(['c', 'd']);
+  });
+  it('picks the shortest of competing routes', () => {
+    const doc = parseOk(src);
+    // a→c exists directly (ac), so the shortest a→c is one hop, not a→b→c.
+    const path = findShortestComponentPath(doc, 'a', 'c');
+    expect(path?.length).toBe(1);
+    expect(path?.[0]?.connectionId).toBe('ac');
+  });
+  it('marks a hop reverse when traversed against the arrow', () => {
+    // Only c -> b exists; a path from b to c must run that connection reverse.
+    const doc = parseOk(`@startuml
+component "B" as b
+component "C" as c
+c -> b as cb
+@enduml
+`);
+    const path = findShortestComponentPath(doc, 'b', 'c');
+    expect(path?.length).toBe(1);
+    expect(path?.[0]?.connectionId).toBe('cb');
+    expect(path?.[0]?.direction).toBe('reverse');
+  });
+  it('returns null when the components are not connected', () => {
+    const doc = parseOk(src);
+    expect(findShortestComponentPath(doc, 'a', 'x')).toBe(null);
+  });
+  it('returns an empty path when start === end', () => {
+    const doc = parseOk(src);
+    expect(findShortestComponentPath(doc, 'a', 'a')).toEqual([]);
+  });
+});
+
+describe('createFlowChain', () => {
+  const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+@enduml
+`;
+  it('emits one chained flow per hop with after: links', () => {
+    const doc = parseOk(src);
+    const hops = findShortestComponentPath(doc, 'a', 'c')!;
+    const { text, flowNames } = createFlowChain(src, doc, { hops });
+    expect(flowNames).toHaveLength(2);
+
+    const out = parseOk(text);
+    expect(out.flows.map((f) => f.name)).toEqual(flowNames);
+    const [f1, f2] = out.flows;
+    // First flow drives the relay (has rate, no deps); the rest are dependent.
+    expect(f1!.connection).toBe('ab');
+    expect(f1!.hasRate).toBe(true);
+    expect(f1!.after).toEqual([]);
+    expect(f2!.connection).toBe('bc');
+    expect(f2!.hasRate).toBe(false);
+    expect(f2!.after).toEqual([flowNames[0]]);
+  });
+  it('drops the rate on the first flow when continuous is false', () => {
+    const doc = parseOk(src);
+    const hops = findShortestComponentPath(doc, 'a', 'c')!;
+    const { text } = createFlowChain(src, doc, { hops, continuous: false });
+    const out = parseOk(text);
+    expect(out.flows[0]!.hasRate).toBe(false);
+  });
+  it('emits direction: reverse for an against-arrow hop', () => {
+    const rsrc = `@startuml
+component "B" as b
+component "C" as c
+c -> b as cb
+@enduml
+`;
+    const doc = parseOk(rsrc);
+    const hops = findShortestComponentPath(doc, 'b', 'c')!;
+    const { text } = createFlowChain(rsrc, doc, { hops });
+    const out = parseOk(text);
+    expect(out.flows[0]!.direction).toBe('reverse');
+  });
+  it('generates names that do not collide with existing ids', () => {
+    const withFlow = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+
+@flow relay1 on ab
+  every: 1000ms
+@enduml
+`;
+    const doc = parseOk(withFlow);
+    const hops = findShortestComponentPath(doc, 'a', 'c')!;
+    const { flowNames } = createFlowChain(withFlow, doc, { hops });
+    expect(flowNames).not.toContain('relay1');
+    expect(new Set(flowNames).size).toBe(flowNames.length);
   });
 });
 
