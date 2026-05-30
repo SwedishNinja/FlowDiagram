@@ -122,49 +122,6 @@ function hitTestFrame(
   return null;
 }
 
-/** Find the deepest-nested package whose bounding box contains (x, y) in
- *  diagram coords. Returns undefined if the point sits outside every group.
- *  Groups that are collapsed or hidden inside a collapsed ancestor are excluded
- *  so right-clicking in visually-empty space never auto-assigns to an invisible
- *  package. */
-function findInnermostContainingGroup(
-  layout: import('../types').LayoutResult,
-  x: number,
-  y: number,
-  collapsedGroups: Set<string> = new Set(),
-): string | undefined {
-  const parentOf = new Map<string, string | undefined>();
-  for (const g of layout.groups) parentOf.set(g.id, g.parentGroup);
-
-  const isHidden = (id: string): boolean => {
-    let cursor = parentOf.get(id);
-    while (cursor !== undefined) {
-      if (collapsedGroups.has(cursor)) return true;
-      cursor = parentOf.get(cursor);
-    }
-    return false;
-  };
-
-  const candidates = layout.groups.filter(
-    (g) =>
-      !collapsedGroups.has(g.id) &&
-      !isHidden(g.id) &&
-      x >= g.x && x <= g.x + g.width &&
-      y >= g.y && y <= g.y + g.height,
-  );
-  if (candidates.length === 0) return undefined;
-  const depthOf = (id: string): number => {
-    let d = 0;
-    let cursor = parentOf.get(id);
-    while (cursor !== undefined) {
-      d++;
-      cursor = parentOf.get(cursor);
-    }
-    return d;
-  };
-  candidates.sort((a, b) => depthOf(b.id) - depthOf(a.id));
-  return candidates[0]!.id;
-}
 
 /** Shortest distance from (px, py) to the segment (ax, ay)–(bx, by). Used
  *  for the edge polyline hit-test. */
@@ -546,28 +503,19 @@ export default function FlowCanvas() {
         dragRef.current = { kind: 'create-connection', sourceId: node.id };
         canvas.style.cursor = 'crosshair';
       } else {
-        // Right-click on empty space → create a new component there.
+        // Right-click on empty space → create a new top-level component there.
+        // We never auto-assign to a package by cursor position: ELK often
+        // stacks packages vertically so their x-ranges fully overlap, meaning
+        // almost every click lands "inside" some package even when the user
+        // sees only empty canvas. Package assignment is done via the Inspector.
         const ast = useFlowStore.getState().ast;
         const sourceText = useFlowStore.getState().sourceText;
-        const currentLayout = useFlowStore.getState().layout;
         if (!ast) return;
         const id = generateUniqueComponentId(ast);
-        const collapsedGroups = currentLayout
-          ? computeCollapsedGroups(
-              currentLayout,
-              t.transform.scale,
-              useFlowStore.getState().collapseThresholdPx,
-              useFlowStore.getState().manualCollapsed,
-            )
-          : new Set<string>();
-        const parentGroupId = currentLayout
-          ? findInnermostContainingGroup(currentLayout, coords.x, coords.y, collapsedGroups)
-          : undefined;
         const updated = createComponent(sourceText, ast, {
           id,
           displayName: id,
           position: { x: coords.x, y: coords.y },
-          parentGroupId,
         });
         if (updated !== sourceText) {
           useFlowStore.getState().setSourceText(updated);
