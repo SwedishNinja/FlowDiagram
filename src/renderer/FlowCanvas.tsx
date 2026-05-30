@@ -26,7 +26,10 @@ import {
 } from '../parser/textMutations';
 import Inspector from './Inspector';
 import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
-import type { LayoutNode, LayoutGroup } from '../types';
+import type { LayoutNode, LayoutGroup, StageNode } from '../types';
+
+/** Stable empty array for ToolPalette's stages selector — see comment there. */
+const EMPTY_STAGES: ReadonlyArray<StageNode> = [];
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
 
@@ -1228,7 +1231,10 @@ export default function FlowCanvas() {
 
 function ToolPalette({ activeTool }: { activeTool: 'select' | 'add-component' }) {
   const setToolMode = useFlowStore((s) => s.setToolMode);
-  const stages = useFlowStore((s) => s.ast?.stages ?? []);
+  // NB: read ast then derive — `s.ast?.stages ?? []` inside the selector
+  // returns a fresh array each call and infinite-loops useSyncExternalStore.
+  const ast = useFlowStore((s) => s.ast);
+  const stages = ast?.stages ?? EMPTY_STAGES;
   const setSelection = useFlowStore((s) => s.setSelection);
   const [stagesOpen, setStagesOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);

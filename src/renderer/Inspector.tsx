@@ -17,7 +17,14 @@ import {
   updateFlow,
   updateGroup,
 } from '../parser/textMutations';
-import type { ComponentNode, ConnectionNode, FlowNode, GroupNode, StageNode } from '../types';
+import type { ComponentNode, ConnectionNode, FlowNode, FlowDocument, GroupNode, StageNode } from '../types';
+
+// Stable empty arrays for Zustand selectors. A fresh `?? []` inside a
+// useFlowStore selector loops React 19's useSyncExternalStore equality check.
+const EMPTY_FLOWS: ReadonlyArray<FlowNode> = [];
+const EMPTY_GROUPS: ReadonlyArray<GroupNode> = [];
+function selectFlows(s: { ast: FlowDocument | null }) { return s.ast?.flows ?? EMPTY_FLOWS; }
+function selectGroups(s: { ast: FlowDocument | null }) { return s.ast?.groups ?? EMPTY_GROUPS; }
 
 /**
  * Floating right-side panel that surfaces editable fields for the currently
@@ -149,7 +156,7 @@ function ComponentInspector({ comp }: { comp: ComponentNode }) {
 }
 
 function PackageSelectField({ comp }: { comp: ComponentNode }) {
-  const groups = useFlowStore((s) => s.ast?.groups ?? []);
+  const groups = useFlowStore(selectGroups);
   const setSelection = useFlowStore((s) => s.setSelection);
   const currentValue = comp.parentGroup ?? '';
   const onChange = (next: string) => {
@@ -183,7 +190,7 @@ function PackageSelectField({ comp }: { comp: ComponentNode }) {
 }
 
 function ConnectionInspector({ conn }: { conn: ConnectionNode }) {
-  const flows = useFlowStore((s) => s.ast?.flows ?? []);
+  const flows = useFlowStore(selectFlows);
   const setSelection = useFlowStore((s) => s.setSelection);
   const clearSelection = useFlowStore((s) => s.clearSelection);
 
