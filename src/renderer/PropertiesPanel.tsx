@@ -626,6 +626,8 @@ function StageForm({ stage }: { stage: StageNode }) {
   const setSelection = useFlowStore((s) => s.setSelection);
   const clearSelection = useFlowStore((s) => s.clearSelection);
   const allStages = useFlowStore(selectStages);
+  const allFlows = useFlowStore(selectFlows);
+  const [showAddFlow, setShowAddFlow] = useState(false);
 
   const commit = (updates: { after?: string[] | null; repeat?: boolean }) => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
@@ -645,7 +647,24 @@ function StageForm({ stage }: { stage: StageNode }) {
     if (next !== sourceText) setSourceText(next);
   };
 
+  const addFlow = (flowName: string) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = moveFlowToStage(sourceText, ast, flowName, stage.name);
+    if (next !== sourceText) setSourceText(next);
+    setShowAddFlow(false);
+  };
+
+  const removeFlow = (flowName: string) => {
+    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    if (!ast) return;
+    const next = moveFlowToStage(sourceText, ast, flowName, null);
+    if (next !== sourceText) setSourceText(next);
+  };
+
   const addableDeps = allStages.map((s) => s.name).filter((n) => n !== stage.name && !stage.after.includes(n));
+  // Flows not yet assigned to any stage
+  const unassignedFlows = allFlows.filter((f) => !f.stage);
 
   const cascadeDelete = () => {
     const { sourceText, setSourceText, ast } = useFlowStore.getState();
@@ -701,7 +720,45 @@ function StageForm({ stage }: { stage: StageNode }) {
         </div>
       </Field>
 
-      <Field label="Flows">
+      {/* Flows — custom header row with + button */}
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+          <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-4)', letterSpacing: '0.08em', flex: 1 }}>Flows</span>
+          <button
+            type="button"
+            onClick={() => setShowAddFlow((v) => !v)}
+            disabled={unassignedFlows.length === 0}
+            title={unassignedFlows.length === 0 ? 'No unassigned flows available' : 'Add a flow to this stage'}
+            style={{
+              ...ghostButtonStyle,
+              padding: '1px 7px',
+              fontSize: 'var(--fs-sm)',
+              lineHeight: 1,
+              color: showAddFlow ? 'var(--ink-1)' : 'var(--ink-3)',
+              borderColor: showAddFlow ? 'var(--line-strong)' : 'var(--line)',
+              background: showAddFlow ? 'var(--surface-4)' : 'transparent',
+            }}
+          >
+            +
+          </button>
+        </div>
+
+        {/* Dropdown to pick an unassigned flow */}
+        {showAddFlow && (
+          <select
+            autoFocus
+            value=""
+            onChange={(e) => { if (e.target.value) addFlow(e.target.value); }}
+            onBlur={() => setShowAddFlow(false)}
+            style={{ ...selectStyle, marginBottom: 6 }}
+          >
+            <option value="">Select a flow…</option>
+            {unassignedFlows.map((f) => (
+              <option key={f.name} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+        )}
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
           {stage.flowNames.length === 0 && (
             <span style={{ color: 'var(--ink-5)', fontSize: 'var(--fs-xs)' }}>(no flows in this stage)</span>
@@ -711,12 +768,13 @@ function StageForm({ stage }: { stage: StageNode }) {
               <button type="button" onClick={() => setSelection(name, 'flow')} style={{ ...inlineLinkStyle, flex: 1, textAlign: 'left', color: 'var(--ink-2)', fontSize: 'var(--fs-xs)', textDecoration: 'none' }}>
                 {name}
               </button>
+              <button type="button" onClick={() => removeFlow(name)} title="Remove from stage" style={reorderBtnStyle(false)}>↗</button>
               <button type="button" onClick={() => reorder(i, i - 1)} disabled={i === 0} title="Move up" style={reorderBtnStyle(i === 0)}>↑</button>
               <button type="button" onClick={() => reorder(i, i + 1)} disabled={i === stage.flowNames.length - 1} title="Move down" style={reorderBtnStyle(i === stage.flowNames.length - 1)}>↓</button>
             </div>
           ))}
         </div>
-      </Field>
+      </div>
 
       <DangerButton onClick={cascadeDelete}>Delete stage</DangerButton>
     </>
