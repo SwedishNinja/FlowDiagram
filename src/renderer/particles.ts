@@ -280,13 +280,16 @@ export class ParticleSystem {
       if (stage && stage.status !== 'running') continue;
 
       const hasDeps = emitter.flow.after.length > 0;
-      const staged = !!stage;
       const hasRate = !!emitter.flow.hasRate;
 
       if (!hasDeps) {
-        // ONCE-PER-STAGE-RUN: flow lives in a stage, has no rate and no deps.
-        // Fire exactly one particle per stage run, honoring startDelay.
-        if (staged && !hasRate) {
+        // ONE-SHOT: no rate (every:/freq:) and no deps → fire exactly one
+        // particle, honoring startDelay. This is what "Re-spawn on interval"
+        // being OFF means. A staged flow re-arms each stage run (resetEmitter
+        // on startStage); an unstaged one fires once until the next replay
+        // (reset() re-arms every emitter). Without this, an unstaged no-rate
+        // flow fell through to the interval loop and respawned forever.
+        if (!hasRate) {
           if (emitter.oneShotFired) continue;
           if (emitter.startDelayRemaining > 0) {
             emitter.startDelayRemaining -= dt;
@@ -297,7 +300,7 @@ export class ParticleSystem {
           continue;
         }
 
-        // CONTINUOUS (unstaged, or staged with rate): existing interval loop.
+        // CONTINUOUS: has a rate (every:/freq:). Existing interval loop.
         if (emitter.startDelayRemaining > 0) {
           emitter.startDelayRemaining -= dt;
           if (emitter.startDelayRemaining > 0) continue;

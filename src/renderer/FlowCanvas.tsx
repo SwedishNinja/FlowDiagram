@@ -489,7 +489,7 @@ export default function FlowCanvas() {
     const cx = e.clientX - rect.left;
     const cy = e.clientY - rect.top;
 
-    // RIGHT CLICK — create component on empty space, start connection on node.
+    // RIGHT CLICK — create component on empty space, select on a node.
     if (e.button === 2) {
       e.preventDefault();
       const coords = getDiagramCoords(e);
@@ -497,11 +497,17 @@ export default function FlowCanvas() {
       if (!coords || !t) return;
       const node = findNodeAt(coords.x, coords.y, t.transform.scale);
       if (node) {
-        // Right-click on a node → start connection drag from it.
+        // Right-click on a node SELECTS it (opens its inspector) — a plain
+        // click no longer fires the connection gesture. We still arm a
+        // connection drag so a deliberate right-DRAG to another node creates a
+        // connection (the only canvas affordance for that), but we don't switch
+        // the cursor to crosshair here: connection mode is entered only once the
+        // pointer actually moves (handlePointerMove), so a click stays inert and
+        // pointer-up no-ops when the drag never found a target.
+        useFlowStore.getState().setSelection(node.id, 'component');
         e.currentTarget.setPointerCapture(e.pointerId);
-        connectionDraftRef.current = { sourceId: node.id, cursorX: coords.x, cursorY: coords.y, targetId: null };
+        connectionDraftRef.current = null;
         dragRef.current = { kind: 'create-connection', sourceId: node.id };
-        canvas.style.cursor = 'crosshair';
       } else {
         // Right-click on empty space → create a new top-level component there.
         // We never auto-assign to a package by cursor position: ELK often
