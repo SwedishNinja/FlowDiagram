@@ -176,6 +176,73 @@ describe('deleteFlow', () => {
   });
 });
 
+describe('deleteFlow — after: reference cleanup', () => {
+  const RELAY = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+
+a -> b as ab
+b -> c as bc
+
+@flow f1 on ab
+  every: 1000ms
+
+@flow f2 on bc
+  traverse_time: 1500ms
+  after: f1
+@enduml
+`;
+  it('removes a now-empty after: line and the result re-parses cleanly', () => {
+    const doc = parseOk(RELAY);
+    const out = deleteFlow(RELAY, doc, 'f1');
+    expect(out).not.toContain('@flow f1');
+    expect(out).toContain('@flow f2 on bc');
+    expect(out).not.toContain('after:'); // sole dependency removed → line gone
+    parseOk(out); // would throw "depends on unknown flow" if the ref dangled
+  });
+
+  it('drops only the deleted dependency, keeping the rest', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+
+a -> b as ab
+
+@flow f1 on ab
+  every: 1000ms
+
+@flow f2 on ab
+  every: 1000ms
+
+@flow f3 on ab
+  after: f1, f2
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = deleteFlow(src, doc, 'f1');
+    expect(out).toContain('after: f2');
+    expect(out).not.toMatch(/after:.*\bf1\b/);
+    const reparsed = parseOk(out);
+    expect(reparsed.flows.find((f) => f.name === 'f3')?.after).toEqual(['f2']);
+  });
+
+  it('deleteConnection scrubs dependents of cascaded flows', () => {
+    const doc = parseOk(RELAY);
+    const out = deleteConnection(RELAY, doc, 'ab'); // removes f1 (on ab)
+    expect(out).not.toContain('@flow f1');
+    expect(out).toContain('@flow f2 on bc');
+    parseOk(out);
+  });
+
+  it('deleteComponent scrubs dependents of cascaded flows', () => {
+    const doc = parseOk(RELAY);
+    const out = deleteComponent(RELAY, doc, 'a'); // removes ab + f1
+    expect(out).not.toContain('@flow f1');
+    parseOk(out);
+  });
+});
+
 describe('generateUniqueComponentId', () => {
   it('returns node1 for an empty doc', () => {
     const doc = parseOk(`@startuml

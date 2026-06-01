@@ -19,7 +19,7 @@ import {
   deleteFlow,
   deleteGroup,
   generateUniqueComponentId,
-  renameComponent,
+  updateComponent,
   updateConnection,
 } from '../parser/textMutations';
 import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
@@ -150,7 +150,7 @@ const CORNER_TO_CURSOR: Record<Corner, string> = {
 
 interface RenameOverlay {
   nodeId: string;
-  /** Initial value of the input (the existing component ID). */
+  /** Initial value of the input (the component's current display name). */
   initial: string;
   /** Screen-space position + size of the input (relative to the canvas container). */
   left: number;
@@ -954,7 +954,7 @@ export default function FlowCanvas() {
     const t = computeTransform(rect.width, rect.height, currentLayout, panRef.current.x, panRef.current.y, zoomRef.current);
     setRenameOverlay({
       nodeId: node.id,
-      initial: node.id,
+      initial: node.displayName,
       left: node.x * t.scale + t.offsetX,
       top: node.y * t.scale + t.offsetY,
       width: node.width * t.scale,
@@ -981,36 +981,26 @@ export default function FlowCanvas() {
     zoomRef.current = 1;
   }, [findNodeAt, beginRename]);
 
-  /** Commit a rename: validate, build new source via renameComponent, push to store. */
-  const commitRename = useCallback((nodeId: string, rawNewId: string) => {
-    const newId = rawNewId.trim();
-    const valid = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId);
-    if (!valid || newId === nodeId) {
-      setRenameOverlay(null);
-      return;
-    }
+  /** Commit an inline rename: set the node's DISPLAY NAME (the visible label),
+   *  not its alias. The alias is an internal reference edited in the inspector;
+   *  double-clicking the label edits what the user actually sees. */
+  const commitRename = useCallback((nodeId: string, rawNewName: string) => {
+    const newName = rawNewName.trim();
     const ast = useFlowStore.getState().ast;
     if (!ast) {
       setRenameOverlay(null);
       return;
     }
-    // Reject collisions with existing component/group/connection/flow IDs.
-    const taken = new Set<string>([
-      ...ast.components.map((c) => c.id),
-      ...ast.groups.map((g) => g.id),
-      ...ast.connections.map((c) => c.id),
-      ...ast.flows.map((f) => f.name),
-    ]);
-    taken.delete(nodeId);
-    if (taken.has(newId)) {
+    const comp = ast.components.find((c) => c.id === nodeId);
+    if (!comp || newName === '' || newName === comp.displayName) {
       setRenameOverlay(null);
       return;
     }
     const sourceText = useFlowStore.getState().sourceText;
-    const updated = renameComponent(sourceText, ast, nodeId, newId);
+    const updated = updateComponent(sourceText, ast, nodeId, { displayName: newName });
     if (updated !== sourceText) {
       useFlowStore.getState().setSourceText(updated);
-      useFlowStore.getState().setSelection(newId, 'component');
+      useFlowStore.getState().setSelection(nodeId, 'component');
     }
     setRenameOverlay(null);
   }, []);

@@ -100,8 +100,9 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
   const [data, setData] = useState('');
   const [color, setColor] = useState<string | null>(null);
   const [continuous, setContinuous] = useState(true);
-  const [everyMs, setEveryMs] = useState(1000);
-  const [traverseMs, setTraverseMs] = useState(1500);
+  // Held as raw text so the user can type freely; coerced on Create.
+  const [everyMs, setEveryMs] = useState('1000');
+  const [traverseMs, setTraverseMs] = useState('1500');
   const [direction, setDirection] = useState<'forward' | 'reverse'>(
     match?.reverseToMatchOrder ? 'reverse' : 'forward',
   );
@@ -154,8 +155,8 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
       data: data.trim() ? data.trim() : null,
       color,
       hasRate: continuous,
-      intervalMs: everyMs,
-      traverseTimeMs: traverseMs,
+      intervalMs: toMs(everyMs, 30, 1000),
+      traverseTimeMs: toMs(traverseMs, 50, 1500),
       direction,
       stage: stage === '' ? null : stage,
     });
@@ -240,7 +241,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
           type="number"
           min={50}
           value={traverseMs}
-          onChange={(e) => setTraverseMs(Math.max(50, Number(e.target.value) || 50))}
+          onChange={(e) => setTraverseMs(e.target.value)}
           style={textInputStyle}
         />
       </FieldRow>
@@ -258,7 +259,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
             type="number"
             min={30}
             value={everyMs}
-            onChange={(e) => setEveryMs(Math.max(30, Number(e.target.value) || 30))}
+            onChange={(e) => setEveryMs(e.target.value)}
             style={textInputStyle}
           />
         </FieldRow>
@@ -294,8 +295,9 @@ function RelayCreateCard({
   const [prefix, setPrefix] = useState('relay');
   const [data, setData] = useState('');
   const [continuous, setContinuous] = useState(true);
-  const [everyMs, setEveryMs] = useState(1000);
-  const [traverseMs, setTraverseMs] = useState(1500);
+  // Held as raw text so the user can type freely; coerced on Create.
+  const [everyMs, setEveryMs] = useState('1000');
+  const [traverseMs, setTraverseMs] = useState('1500');
 
   // Route as display names: start node followed by each hop's destination.
   const nameOf = (id: string) => ast.components.find((c) => c.id === id)?.displayName ?? id;
@@ -311,8 +313,8 @@ function RelayCreateCard({
       namePrefix: trimmedPrefix,
       data: data.trim() ? data.trim() : null,
       continuous,
-      intervalMs: everyMs,
-      traverseTimeMs: traverseMs,
+      intervalMs: toMs(everyMs, 30, 1000),
+      traverseTimeMs: toMs(traverseMs, 50, 1500),
     });
     if (updated !== sourceText) setSourceText(updated);
     if (flowNames[0]) setSelection(flowNames[0], 'flow');
@@ -351,7 +353,7 @@ function RelayCreateCard({
           type="number"
           min={50}
           value={traverseMs}
-          onChange={(e) => setTraverseMs(Math.max(50, Number(e.target.value) || 50))}
+          onChange={(e) => setTraverseMs(e.target.value)}
           style={textInputStyle}
         />
       </FieldRow>
@@ -369,7 +371,7 @@ function RelayCreateCard({
             type="number"
             min={30}
             value={everyMs}
-            onChange={(e) => setEveryMs(Math.max(30, Number(e.target.value) || 30))}
+            onChange={(e) => setEveryMs(e.target.value)}
             style={textInputStyle}
           />
         </FieldRow>
@@ -448,6 +450,14 @@ function titleCaseFromId(id: string): string {
   const m = id.match(/^([a-zA-Z]+)(\d+)$/);
   if (m) return m[1]!.charAt(0).toUpperCase() + m[1]!.slice(1) + ' ' + m[2]!;
   return id.charAt(0).toUpperCase() + id.slice(1);
+}
+
+/** Coerce a free-text ms field to a valid number on submit: round, enforce a
+ *  floor, and fall back to a default for empty/garbage input. */
+function toMs(raw: string, min: number, fallback: number): number {
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(min, n);
 }
 
 function Card({ children }: { children: React.ReactNode }) {

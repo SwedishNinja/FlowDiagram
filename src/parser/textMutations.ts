@@ -55,11 +55,14 @@ function buildDeleteComponentEdits(text: string, doc: FlowDocument, id: string):
     }
   }
 
+  const deletedFlows = new Set<string>();
   for (const flow of doc.flows) {
     if (affectedConnIds.has(flow.connection) && flow.loc) {
       edits.push(deleteEdit(text, flow.loc));
+      deletedFlows.add(flow.name);
     }
   }
+  edits.push(...buildAfterCleanupEdits(text, doc, deletedFlows));
 
   return edits;
 }
@@ -76,17 +79,67 @@ export function deleteConnection(text: string, doc: FlowDocument, id: string): s
   if (!conn?.loc) return text;
 
   const edits: Edit[] = [deleteEdit(text, conn.loc)];
+  const deletedFlows = new Set<string>();
   for (const flow of doc.flows) {
-    if (flow.connection === id && flow.loc) edits.push(deleteEdit(text, flow.loc));
+    if (flow.connection === id && flow.loc) {
+      edits.push(deleteEdit(text, flow.loc));
+      deletedFlows.add(flow.name);
+    }
   }
+  edits.push(...buildAfterCleanupEdits(text, doc, deletedFlows));
   return applyEdits(text, edits);
 }
 
-/** Delete a single flow by name. */
+/** Delete a single flow by name, scrubbing it from any other flow's `after:`. */
 export function deleteFlow(text: string, doc: FlowDocument, name: string): string {
   const flow = doc.flows.find((f) => f.name === name);
   if (!flow?.loc) return text;
-  return applyEdits(text, [deleteEdit(text, flow.loc)]);
+  return applyEdits(text, [
+    deleteEdit(text, flow.loc),
+    ...buildAfterCleanupEdits(text, doc, new Set([name])),
+  ]);
+}
+
+/**
+ * Edits that scrub references to `deletedNames` from every OTHER flow's
+ * `after:` clause — so deleting a flow never leaves a dangling dependency that
+ * fails validation ("depends on unknown flow"). When removing the names empties
+ * a flow's list, its whole `after:` line is removed (with the trailing newline);
+ * otherwise the line is rewritten with the survivors. Flows in `deletedNames`
+ * are skipped — the caller is removing them wholesale.
+ */
+function buildAfterCleanupEdits(
+  text: string,
+  doc: FlowDocument,
+  deletedNames: Set<string>,
+): Edit[] {
+  const edits: Edit[] = [];
+  for (const flow of doc.flows) {
+    if (deletedNames.has(flow.name) || !flow.loc) continue;
+    const remaining = flow.after.filter((dep) => !deletedNames.has(dep));
+    if (remaining.length === flow.after.length) continue; // nothing referenced
+
+    const slice = text.slice(flow.loc.start, flow.loc.end);
+    const m = slice.match(/^([ \t]*after:[ \t]*)([^\n]+)$/m);
+    if (!m || m.index === undefined) continue;
+    const lineStart = flow.loc.start + m.index;
+    const valueStart = lineStart + m[1]!.length;
+    const valueEnd = valueStart + m[2]!.length;
+
+    if (remaining.length === 0) {
+      // Remove the entire `after:` line, consuming the trailing newline (or the
+      // preceding one when the clause is the block's last line).
+      let start = lineStart;
+      let end = valueEnd;
+      if (text[end] === '\r') end++;
+      if (text[end] === '\n') end++;
+      else if (text[start - 1] === '\n') start--;
+      edits.push({ start, end, replacement: '' });
+    } else {
+      edits.push({ start: valueStart, end: valueEnd, replacement: remaining.join(', ') });
+    }
+  }
+  return edits;
 }
 
 /** Word-boundary alias matcher. Aliases are `[a-zA-Z_][a-zA-Z0-9_]*` so `\b`
@@ -1183,11 +1236,21 @@ export function deleteGroup(text: string, doc: FlowDocument, id: string): string
     if (conn.loc.start >= group.loc.start && conn.loc.end <= group.loc.end) continue;
     edits.push(deleteEdit(text, conn.loc));
   }
+  const deletedFlows = new Set<string>();
   for (const flow of doc.flows) {
-    if (!affectedConnIds.has(flow.connection) || !flow.loc) continue;
-    if (flow.loc.start >= group.loc.start && flow.loc.end <= group.loc.end) continue;
-    edits.push(deleteEdit(text, flow.loc));
+    if (!flow.loc) continue;
+    const insidePackage = flow.loc.start >= group.loc.start && flow.loc.end <= group.loc.end;
+    if (insidePackage) {
+      // Removed with the package range — still a deleted name to scrub.
+      deletedFlows.add(flow.name);
+      continue;
+    }
+    if (affectedConnIds.has(flow.connection)) {
+      edits.push(deleteEdit(text, flow.loc));
+      deletedFlows.add(flow.name);
+    }
   }
+  edits.push(...buildAfterCleanupEdits(text, doc, deletedFlows));
 
   return applyEdits(text, edits);
 }
