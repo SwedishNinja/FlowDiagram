@@ -10,6 +10,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   currentPath: () => ipcRenderer.invoke('file:current-path'),
   exportGif: (data) => ipcRenderer.invoke('file:export-gif', data),
 
+  // Report unsaved-changes state to main (drives the save-on-quit prompt).
+  setDirtyState: (isDirty, content) =>
+    ipcRenderer.send('app:dirty-state', { isDirty, content }),
+
   // Directory operations
   listDir: (path) => ipcRenderer.invoke('dir:list', path),
   pickDir: () => ipcRenderer.invoke('dir:pick'),

@@ -7,6 +7,11 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let currentFilePath = null;
 
+// Mirror of the renderer's unsaved-changes state, kept current via the
+// 'app:dirty-state' IPC channel so the close handler can decide synchronously
+// whether to prompt — and has the latest content on hand to write if asked.
+let appDirtyState = { isDirty: false, latestContent: '' };
+
 function updateWindowTitle() {
   if (!mainWindow) return;
   const suffix = currentFilePath ? ` — ${path.basename(currentFilePath)}` : ' — Untitled';
@@ -28,6 +33,40 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
+
+  // Guard unsaved work on quit. Intercept the window close; if there are
+  // unsaved changes, prompt Save / Don't Save / Cancel before letting it go.
+  let allowClose = false;
+  mainWindow.on('close', (e) => {
+    if (allowClose || !appDirtyState.isDirty) return;
+    e.preventDefault();
+    promptSaveThenClose();
+  });
+
+  async function promptSaveThenClose() {
+    if (!mainWindow) return;
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Save', "Don't Save", 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: 'Unsaved changes',
+      message: 'Save changes before closing?',
+      detail: currentFilePath
+        ? `"${path.basename(currentFilePath)}" has unsaved changes.`
+        : 'Your diagram has unsaved changes that will be lost.',
+    });
+    if (choice.response === 2) return; // Cancel — keep the window open.
+    if (choice.response === 0) {
+      // Save — abort the close if the user backs out of the Save As dialog.
+      const result = await writeFileOrSaveAs(appDirtyState.latestContent);
+      if (!result) return;
+    }
+    appDirtyState.isDirty = false;
+    allowClose = true;
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
   }
 
   mainWindow.on('closed', () => {
@@ -72,12 +111,25 @@ async function saveAsHandler(content) {
   return { path: result.filePath };
 }
 
-ipcMain.handle('file:save', async (_event, content) => {
-  if (!currentFilePath) {
-    return saveAsHandler(content);
-  }
+// Write to the current file, falling back to Save As when there isn't one.
+// Returns { path } on success, or null if the user cancels Save As.
+async function writeFileOrSaveAs(content) {
+  if (!currentFilePath) return saveAsHandler(content);
   await fs.writeFile(currentFilePath, content, 'utf-8');
   return { path: currentFilePath };
+}
+
+ipcMain.handle('file:save', async (_event, content) => {
+  return writeFileOrSaveAs(content);
+});
+
+// Renderer pushes its unsaved-changes state (and the latest content) here so
+// the window close handler can prompt and save without an async round-trip.
+ipcMain.on('app:dirty-state', (_event, payload) => {
+  appDirtyState = {
+    isDirty: !!(payload && payload.isDirty),
+    latestContent: (payload && payload.content) || '',
+  };
 });
 
 ipcMain.handle('file:save-as', async (_event, content) => {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useFlowStore } from '../store/flowStore';
 
 export interface ElectronFileState {
@@ -14,16 +14,25 @@ export const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
 export function useElectronFile(): ElectronFileState {
   const [currentPath, setCurrentPath] = useState<string | null>(null);
-  // Track last-saved text so "Save" can detect dirty state if needed later
+  // Baseline of what's on disk. The doc is "dirty" when sourceText differs.
   const lastSavedRef = useRef<string | null>(null);
+
+  // Push the current dirty state (and latest content) to the Electron main
+  // process, which uses it to prompt Save / Don't Save / Cancel on quit.
+  const reportDirty = useCallback(() => {
+    if (!window.electronAPI) return;
+    const text = useFlowStore.getState().sourceText;
+    window.electronAPI.setDirtyState(text !== lastSavedRef.current, text);
+  }, []);
 
   const openFile = async () => {
     if (!window.electronAPI) return;
     const result = await window.electronAPI.openFile();
     if (result) {
-      useFlowStore.getState().setSourceText(result.content);
       lastSavedRef.current = result.content;
+      useFlowStore.getState().setSourceText(result.content);
       setCurrentPath(result.path);
+      reportDirty();
     }
   };
 
@@ -35,6 +44,7 @@ export function useElectronFile(): ElectronFileState {
       if (result) {
         lastSavedRef.current = content;
         setCurrentPath(result.path);
+        reportDirty();
       }
     } else {
       await saveFileAs();
@@ -48,23 +58,39 @@ export function useElectronFile(): ElectronFileState {
     if (result) {
       lastSavedRef.current = content;
       setCurrentPath(result.path);
+      reportDirty();
     }
   };
 
   const newFile = () => {
-    useFlowStore.getState().setSourceText(defaultEmptyDocument());
-    lastSavedRef.current = null;
+    const doc = defaultEmptyDocument();
+    // Baseline to the fresh template so an untouched new doc isn't "dirty".
+    lastSavedRef.current = doc;
+    useFlowStore.getState().setSourceText(doc);
     setCurrentPath(null);
     window.electronAPI?.newFile();
+    reportDirty();
   };
 
   const loadFile = async (path: string) => {
     if (!window.electronAPI) return;
     const result = await window.electronAPI.readFile(path);
-    useFlowStore.getState().setSourceText(result.content);
     lastSavedRef.current = result.content;
+    useFlowStore.getState().setSourceText(result.content);
     setCurrentPath(result.path);
+    reportDirty();
   };
+
+  // Report dirty state on mount and whenever the document text changes, so the
+  // main process always knows whether to prompt before the window closes.
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    if (lastSavedRef.current === null) {
+      lastSavedRef.current = useFlowStore.getState().sourceText;
+    }
+    reportDirty();
+    return useFlowStore.subscribe((s) => s.sourceText, reportDirty);
+  }, [reportDirty]);
 
   // Wire up menu events from Electron main process
   useEffect(() => {
