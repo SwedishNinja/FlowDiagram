@@ -50,8 +50,11 @@ export interface GroupNode {
   children: string[];
   /** ID of the containing group if this package is nested inside another. */
   parentGroup?: string;
-  /** Per-package collapse threshold (on-screen width in CSS px). Undefined = inherit global default. */
+  /** Legacy zoom-collapse threshold — parsed but no longer used. */
   collapseAtPx?: number;
+  /** Layered packages: true = starts expanded; false/undefined = starts as
+   *  a closed layer box the user clicks to open. */
+  defaultOpen?: boolean;
   /** Optional package color (hex without #, or named color). */
   color?: string;
   /** Byte offsets of the entire `package … { … }` block in source. */
@@ -134,8 +137,10 @@ export interface LayoutGroup {
   children: string[];
   /** Parent group ID if this package is nested. */
   parentGroup?: string;
-  /** Per-package collapse threshold (CSS px); undefined → use global default. */
+  /** Legacy zoom-collapse threshold — parsed but no longer used. */
   collapseAtPx?: number;
+  /** Layered packages: true = starts expanded (see GroupNode.defaultOpen). */
+  defaultOpen?: boolean;
   /** Optional package color. */
   color?: string;
   /** Bounding box (including a label band on top) */

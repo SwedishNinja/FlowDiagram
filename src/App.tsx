@@ -6,12 +6,13 @@ import FlowCanvas from './renderer/FlowCanvas';
 import FlowEditor from './editor/FlowEditor';
 import { exportGif, computeLayoutBounds, downloadBlob } from './renderer/exportGif';
 import { exportVideo, downloadVideoBlob } from './renderer/exportVideo';
+import { composeViewerHtml, downloadViewerHtml } from './renderer/exportHtml';
 import { detectExportDuration } from './renderer/detectDuration';
 import { useElectronFile, isElectron } from './electron/useElectronFile';
 import PropertiesPanel from './renderer/PropertiesPanel';
 
 
-type ExportFormat = 'gif' | 'webm';
+type ExportFormat = 'gif' | 'webm' | 'html';
 
 const SPEED_OPTIONS = [0.25, 0.5, 1, 2, 4];
 
@@ -63,8 +64,6 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
   const setShowExportFrame = useFlowStore((s) => s.setShowExportFrame);
   const exportFrame = useFlowStore((s) => s.exportFrame);
   const setExportFrame = useFlowStore((s) => s.setExportFrame);
-  const collapseThresholdPx = useFlowStore((s) => s.collapseThresholdPx);
-  const setCollapseThresholdPx = useFlowStore((s) => s.setCollapseThresholdPx);
   const triggerParticleReset = useFlowStore((s) => s.triggerParticleReset);
   const [exporting, setExporting] = useState(false);
   const [exportDuration, setExportDuration] = useState(8);
@@ -99,6 +98,11 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
     setExporting(true);
     setExportPanelOpen(false);
     try {
+      if (exportFormat === 'html') {
+        const title = (currentPath ? currentPath.split(/[/\\]/).pop() : null)?.replace(/\.[^.]+$/, '') ?? 'FlowDiagram';
+        downloadViewerHtml(composeViewerHtml(ast, layout, title), `${title}.html`);
+        return;
+      }
       const viewport = showExportFrame && exportFrame ? exportFrame : undefined;
       const width = exportWidth;
       const height = viewport
@@ -239,11 +243,7 @@ function PlaybackControls({ currentPath, onOpenFile, onSaveFile, onNewFile }: Pl
           View
         </button>
         {viewPanelOpen && (
-          <ViewPanel
-            collapseThresholdPx={collapseThresholdPx}
-            setCollapseThresholdPx={setCollapseThresholdPx}
-            onClose={() => setViewPanelOpen(false)}
-          />
+          <ViewPanel onClose={() => setViewPanelOpen(false)} />
         )}
       </div>
 
@@ -355,15 +355,7 @@ function ClampedNumberInput({ label, min, max, step = 1, value, onChange }: Clam
   );
 }
 
-function ViewPanel({
-  collapseThresholdPx,
-  setCollapseThresholdPx,
-  onClose,
-}: {
-  collapseThresholdPx: number;
-  setCollapseThresholdPx: (v: number) => void;
-  onClose: () => void;
-}) {
+function ViewPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -399,41 +391,40 @@ function ViewPanel({
         gap: '12px',
       }}
     >
-      <div className="fd-label">View</div>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        <span className="fd-label" style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--ink-3)', fontSize: 'var(--fs-xs)' }}>
-          Package collapse threshold (px)
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <input
-            type="number"
-            min={0}
-            max={2000}
-            step={10}
-            value={collapseThresholdPx}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!isNaN(v) && v >= 0) setCollapseThresholdPx(v);
-            }}
-            className="fd-num"
-            style={{ width: '64px' }}
-            aria-label="Package collapse threshold in CSS pixels"
-          />
-          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--ink-5)' }}>px</span>
-          <button
-            type="button"
-            onClick={() => setCollapseThresholdPx(1)}
-            className="fd-btn fd-btn--ghost"
-            style={{ height: 22, padding: '0 8px', fontSize: 'var(--fs-micro)', marginLeft: 'auto' }}
-            title="Reset to default (1 px — effectively disabled)"
-          >
-            Reset
-          </button>
-        </div>
-        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
-          Packages narrower than this on-screen will collapse. Override per-package with <code style={{ color: 'var(--ink-4)' }}>collapse_at: Npx</code> in the DSL.
-        </span>
-      </label>
+      <div className="fd-label">Package layers</div>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button
+          type="button"
+          onClick={() => {
+            const { ast, openPackages } = useFlowStore.getState();
+            if (!ast) return;
+            const next = { ...openPackages };
+            for (const g of ast.groups) next[g.id] = true;
+            useFlowStore.setState({ openPackages: next });
+          }}
+          className="fd-btn fd-btn--ghost"
+          style={{ flex: 1 }}
+        >
+          Open all
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const { ast, openPackages } = useFlowStore.getState();
+            if (!ast) return;
+            const next = { ...openPackages };
+            for (const g of ast.groups) next[g.id] = false;
+            useFlowStore.setState({ openPackages: next });
+          }}
+          className="fd-btn fd-btn--ghost"
+          style={{ flex: 1 }}
+        >
+          Close all
+        </button>
+      </div>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
+        Packages are layers: click a closed package to open it, use its header toggle to close. Set a package to start open with <code style={{ color: 'var(--ink-4)' }}>open: true</code> in the DSL.
+      </span>
     </div>
   );
 }
@@ -529,9 +520,18 @@ function ExportPanel({
           >
             WebM
           </button>
+          <button
+            onClick={() => setFormat('html')}
+            data-active={format === 'html'}
+            style={{ flex: 1 }}
+            title="Self-contained interactive HTML — live animation, pan/zoom, clickable package layers"
+          >
+            HTML
+          </button>
         </div>
       </div>
 
+      {format !== 'html' && (<>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px' }}>
         <div style={{ flex: 1 }}>
           <ClampedNumberInput
@@ -581,6 +581,7 @@ function ExportPanel({
         <Icon d="M4 7V4h3 M17 4h3v3 M20 17v3h-3 M7 20H4v-3" />
         {showExportFrame ? 'Frame active (crop)' : 'Show crop frame'}
       </button>
+      </>)}
 
       {/* Render */}
       <button
@@ -595,7 +596,9 @@ function ExportPanel({
       <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
         {format === 'webm'
           ? 'WebM renders in real time — a 10 s export takes about 10 s.'
-          : 'GIF renders as fast as possible. Large widths make much bigger files.'}
+          : format === 'html'
+            ? 'One self-contained .html file — opens in any browser with live animation, pan/zoom, and clickable package layers.'
+            : 'GIF renders as fast as possible. Large widths make much bigger files.'}
       </div>
     </div>
   );

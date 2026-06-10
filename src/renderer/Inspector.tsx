@@ -424,11 +424,15 @@ function GroupInspector({ group }: { group: GroupNode }) {
       <FieldRow label="Color">
         <ColorField value={group.color} onCommit={(v) => commit({ color: v })} />
       </FieldRow>
-      <FieldRow label="Collapse at (px)">
-        <CollapseAtField
-          initial={group.collapseAtPx}
-          onCommit={(v) => commit({ collapseAtPx: v })}
-        />
+      <FieldRow label="Starts open">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={!!group.defaultOpen}
+            onChange={(e) => commit({ defaultOpen: e.target.checked ? true : null })}
+          />
+          <span style={{ color: '#475569' }}>Expanded on load</span>
+        </label>
       </FieldRow>
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         <button type="button" onClick={ungroup} style={{
@@ -450,70 +454,6 @@ function GroupInspector({ group }: { group: GroupNode }) {
   );
 }
 
-function CollapseAtField({
-  initial,
-  onCommit,
-}: {
-  initial: number | undefined;
-  onCommit: (value: number | null) => void;
-}) {
-  const [value, setValue] = useState(initial === undefined ? '' : String(initial));
-  const [focused, setFocused] = useState(false);
-  useEffect(() => {
-    if (!focused) setValue(initial === undefined ? '' : String(initial));
-  }, [initial, focused]);
-  const commit = () => {
-    const trimmed = value.trim();
-    if (trimmed === '') {
-      if (initial !== undefined) onCommit(null);
-      return;
-    }
-    const n = Number(trimmed);
-    if (!Number.isFinite(n) || n <= 0) {
-      setValue(initial === undefined ? '' : String(initial));
-      return;
-    }
-    if (n !== initial) onCommit(n);
-  };
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <input
-        type="number"
-        min={20}
-        value={value}
-        placeholder="(inherit default)"
-        onChange={(e) => setValue(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => { setFocused(false); commit(); }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') e.currentTarget.blur();
-          else if (e.key === 'Escape') {
-            setValue(initial === undefined ? '' : String(initial));
-            e.currentTarget.blur();
-          }
-        }}
-        style={{ ...textInputStyle, flex: 1 }}
-      />
-      {initial !== undefined && (
-        <button
-          type="button"
-          onClick={() => onCommit(null)}
-          style={{
-            font: '11px inherit',
-            background: 'transparent',
-            border: '1px solid #cbd5e1',
-            borderRadius: 4,
-            padding: '3px 6px',
-            cursor: 'pointer',
-            color: '#475569',
-          }}
-        >
-          Clear
-        </button>
-      )}
-    </div>
-  );
-}
 
 function FlowInspector({ flow }: { flow: FlowNode }) {
   const setSelection = useFlowStore((s) => s.setSelection);

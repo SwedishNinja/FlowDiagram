@@ -100,7 +100,7 @@ component "API Gateway" as gw
 component "Auth Service" as auth
 
 package "Backend" as backend {
-  collapse_at: 180px
+  open: true
   component "Cache" as cache
   auth -> cache as cache_conn : check session
 
@@ -142,7 +142,7 @@ auth -> gw as result_conn : auth result
 - **Connection**: `source -> target as conn_name : label`
   - Arrows: `->` solid, `-->` longer, `..>` dotted, `<->` bidirectional
   - `as conn_name` is required if the connection is referenced by a flow
-- **Package**: `package "Name" as alias [#color] { ... }` — groups components. Can contain components, connections, `@flow` blocks, **nested packages** to any depth, and **references to other packages** (`package <alias>` — pulls a package declared elsewhere into this subtree). A package can be referenced by at most one parent. References may be forward — the referenced package doesn't have to be declared yet. Optional hex `#color` on the header tints the border + fill. Optional `collapse_at: Npx` property line (see "Collapsing" below). **Packages auto-resize to fit their contents** — dragging a component or nested package beyond the box grows the parent automatically.
+- **Package**: `package "Name" as alias [#color] { ... }` — groups components. Can contain components, connections, `@flow` blocks, **nested packages** to any depth, and **references to other packages** (`package <alias>` — pulls a package declared elsewhere into this subtree). A package can be referenced by at most one parent. References may be forward — the referenced package doesn't have to be declared yet. Optional hex `#color` on the header tints the border + fill. Packages are **layers**: they render as a single closed box until clicked open (`open: true` makes one start expanded; legacy `collapse_at:` lines are parsed but ignored). **Packages auto-resize to fit their contents** — dragging a component or nested package beyond the box grows the parent automatically.
 - **@flow**: see below
 - **@positions**: absolute center coordinates for components AND packages (used by drag-to-move persistence). One entry per line: `alias: x, y`. When a package is dragged, entries are written for the package plus every descendant that rode along — each element independently pins its absolute location so auto-resize can't shift anything on reload.
 - **Comments**: `' single line` or `/' multi-line '/`
@@ -165,7 +165,7 @@ auth -> gw as result_conn : auth result
   color: #FF0088             # hex color (also: named like "red", "blue", or "#abc")
   after: flow_a, flow_b      # dependencies — if present, this flow fires ONCE per
                              # upstream arrival (1:1, not continuously)
-  effect: outline            # arrival effect override: dissolve | outline |
+  arrival_effect: outline    # arrival effect override: dissolve | outline |
                              # ripple | fill | sparks | none
                              # (omit to use the diagram default)
   trail: true                # comet trail: the line glows behind the dot and
@@ -180,6 +180,7 @@ Top-level property lines that set defaults for the whole diagram:
 arrival_effect: outline      # default arrival effect for every flow:
                              # dissolve (default) | outline | ripple | fill |
                              # sparks | none
+                             # (the same property inside a @flow overrides it)
 trail: true                  # default comet trail for every flow (default off)
 ```
 
@@ -195,13 +196,13 @@ trail: true                  # default comet trail for every flow (default off)
 
 **Handoff re-condensation**: when the journey *continues* from that box — a flow with `after:` listing the arriving flow departs from the same node, or the next stage in an `after:` chain has a start flow leaving it — the plume doesn't fade away. It dissolves about halfway, then glides across the box and re-condenses at the point where the outgoing line departs, landing there exactly as the next flow's dot spawns: dot → dissolve → re-assemble → next dot, one continuous substance. If the continuing flow has a different color, the plume morphs into it mid-glide. A terminal arrival (nothing continues from that node) still fully dissolves.
 
-**Outline effect** (`effect: outline`): instead of the ink drop, the node's border lights up in the dot's color from the hit point, spreading around the outline both ways with a soft outer glow, then fading. With a handoff it spreads for the first half, then the lit segment slides around the border toward the departure point, shrinking to a spark and morphing into the next flow's color as the next dot spawns. `effect: none` disables the arrival effect for a flow entirely (and skips the ~1 s arrival delay).
+**Outline effect** (`arrival_effect: outline`): instead of the ink drop, the node's border lights up in the dot's color from the hit point, spreading around the outline both ways with a soft outer glow, then fading. With a handoff it spreads for the first half, then the lit segment slides around the border toward the departure point, shrinking to a spark and morphing into the next flow's color as the next dot spawns. `arrival_effect: none` disables the arrival effect for a flow entirely (and skips the ~1 s arrival delay).
 
-**Ripple effect** (`effect: ripple`): sonar rings expand from the hit point across the box and fade. With a handoff the second half plays in reverse — contracting rings converge on the departure point and condense into the next dot, morphing colors.
+**Ripple effect** (`arrival_effect: ripple`): sonar rings expand from the hit point across the box and fade. With a handoff the second half plays in reverse — contracting rings converge on the departure point and condense into the next dot, morphing colors.
 
-**Liquid fill** (`effect: fill`): translucent color pours in from the entry side behind an animated wavy surface line, fills ~40% of the box, then evaporates. With a handoff the liquid band slides toward the departure point and drains out through it, morphing into the next flow's color.
+**Liquid fill** (`arrival_effect: fill`): translucent color pours in from the entry side behind an animated wavy surface line, fills ~40% of the box, then evaporates. With a handoff the liquid band slides toward the departure point and drains out through it, morphing into the next flow's color.
 
-**Spark burst** (`effect: sparks`): the dot shatters into eight sparks that scatter into the box on curved trajectories and burn out. With a handoff they swarm back together at the departure point and recombine into the next dot, morphing colors. Trajectories are seeded per arrival, so exports are reproducible.
+**Spark burst** (`arrival_effect: sparks`): the dot shatters into eight sparks that scatter into the box on curved trajectories and burn out. With a handoff they swarm back together at the departure point and recombine into the next dot, morphing colors. Trajectories are seeded per arrival, so exports are reproducible.
 
 **Comet trail** (`trail: true`, per flow or diagram-wide): the line glows behind the moving dot like a cooling comet tail and the wake fades out in place after the dot arrives. Composes with any arrival effect and never delays arrivals.
 
@@ -248,7 +249,7 @@ Stage semantics:
 ### Canvas
 - **Drag a component** → reposition it; `@positions` is auto-written back.
 - **Drag a package** (top label band, or anywhere on a collapsed package) → moves the whole subtree as a rigid unit; `@positions` entries are written for the package and every descendant that rode along.
-- **Click the ± icon** in a package's top-right corner → pin collapsed or release back to auto-collapse.
+- **Click a closed package** → opens it one layer deeper. **Click the ± icon** in a package's top-right corner → close/open it. The View menu has Open all / Close all.
 - **Drag empty canvas** → pan.
 - **Mouse wheel** → zoom in/out centered on cursor (0.2× to 5×).
 - **Double-click empty** → reset pan + zoom.
@@ -262,7 +263,7 @@ Stage semantics:
 | Play / Pause | Start or stop the animation loop. Pausing preserves particle positions. |
 | Restart | Clears all particles, resets every emitter, and restarts every stage from idle — without touching the source file. |
 | Speed | 0.25× / 0.5× / 1× / 2× / 4× simulation speed. |
-| Collapse _N_ px | Global threshold: packages narrower than this on screen collapse. Per-package `collapse_at:` overrides this. |
+| Package layers | Open all / Close all packages. Click a closed package on the canvas to open it. |
 | Export | Opens the export panel (format, duration, FPS, width, crop-frame toggle, render button). |
 
 ### Export panel
@@ -282,7 +283,7 @@ GIF export uses a **global palette + delta frames** (first frame carries the pal
 - **Connections and flows separate.** A connection is static topology (`gw -> auth`); a flow is dynamic behavior (what data, when, how often). One connection can have multiple flows.
 - **@positions override ELK, edges reroute.** ELK lays out everything, then `@positions` entries override coordinates (absolute centers). Edges touching overridden nodes are redrawn as straight lines to node borders.
 - **Packages auto-resize to fit contents.** After overrides are applied, every group is refit to the union of its children + padding + label band. Dragging a child outside the package grows the package in real time; dragging back in shrinks it. Works across nesting depth.
-- **Packages collapse at a zoom threshold.** When a package's on-screen width falls below a threshold, its contents hide and the package itself renders as a solid colored box. Flows that crossed the boundary reroute to the package border automatically; flows entirely inside the collapsed region are suppressed. Threshold is global (toolbar control, default 200 px) unless a package overrides it with `collapse_at: Npx`. Nested packages inherit collapse from any collapsed ancestor.
+- **Packages are clickable layers.** A closed package renders as a single solid box; clicking it opens that layer in place, revealing its components and (still-closed) nested packages — each click drills one level deeper. The ± toggle closes a layer again. Flows that cross a closed boundary reroute to the package border automatically; flows entirely inside a closed region are suppressed. A package with `open: true` starts expanded. Closed-ness inherits from any closed ancestor.
 - **Parallel edges fan out when rerouted.** Multiple connections that all reroute to the same pair of collapsed containers get a perpendicular offset so each line (and its particles) stays visible instead of stacking.
 - **Zoom compensation for flow ink, not chrome.** Below 1× zoom, particles / edge strokes / arrowheads / flow labels are divided by `min(scale, 1)` so they hold their screen-pixel size. Package boxes and component boxes still scale normally — so when you zoom out you see more packages as smaller tiles, but the flowing data between them stays readable.
 - **Particle arrival counters, not flags.** A dependent flow consumes one arrival per spawn. This prevents "more pongs than pings" — every response is causally tied to a request.

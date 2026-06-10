@@ -251,7 +251,7 @@ a -> c as c2
   traverse_time: 100ms
 @flow overridden on c2
   traverse_time: 100ms
-  effect: dissolve
+  arrival_effect: dissolve
 @enduml
 `;
     const { ps } = await setup(src, { absorbMs: 1000 });
@@ -271,10 +271,10 @@ a -> c as c2
 
 @flow ripples on c1
   traverse_time: 100ms
-  effect: ripple
+  arrival_effect: ripple
 @flow bursts on c2
   traverse_time: 100ms
-  effect: sparks
+  arrival_effect: sparks
 @enduml
 `;
     const { ps } = await setup(src, { absorbMs: 1000 });
@@ -320,7 +320,7 @@ a -> c as c2
     expect(ps.trailGlows).toHaveLength(0);
   });
 
-  it('effect: none skips the effect AND the arrival delay', async () => {
+  it('arrival_effect: none skips the effect AND the delay (legacy effect: alias too)', async () => {
     const src = `@startuml
 component "A" as a
 component "B" as b

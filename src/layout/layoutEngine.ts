@@ -267,6 +267,7 @@ export async function computeLayout(doc: FlowDocument): Promise<LayoutResult> {
         children: group.children,
         parentGroup: group.parentGroup,
         collapseAtPx: group.collapseAtPx,
+        defaultOpen: group.defaultOpen,
         color: group.color,
         x: box.x,
         y: box.y,
@@ -291,6 +292,7 @@ export async function computeLayout(doc: FlowDocument): Promise<LayoutResult> {
         children: group.children,
         parentGroup: group.parentGroup,
         collapseAtPx: group.collapseAtPx,
+        defaultOpen: group.defaultOpen,
         color: group.color,
         x: 0, y: 0, width: 120, height: 60,
       };
@@ -301,6 +303,7 @@ export async function computeLayout(doc: FlowDocument): Promise<LayoutResult> {
       children: group.children,
       parentGroup: group.parentGroup,
       collapseAtPx: group.collapseAtPx,
+        defaultOpen: group.defaultOpen,
       color: group.color,
       x: minX - GROUP_PADDING,
       y: minY - GROUP_PADDING - GROUP_LABEL_HEIGHT,

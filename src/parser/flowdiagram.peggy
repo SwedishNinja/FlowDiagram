@@ -21,6 +21,7 @@ Body
     function ingestPackage(pkg, parentGroupId) {
       const childIds = [];
       let collapseAtPx = undefined;
+      let defaultOpen = undefined;
 
       for (const child of pkg.entries) {
         if (!child) continue;
@@ -39,6 +40,7 @@ Body
           referenceRequests.push({ parentId: pkg.id, refId: child.id });
         } else if (child.type === 'packageProp') {
           if (child.key === 'collapse_at') collapseAtPx = child.value;
+          else if (child.key === 'open') defaultOpen = child.value;
         }
       }
 
@@ -49,6 +51,7 @@ Body
         children: childIds,
         parentGroup: parentGroupId,
         collapseAtPx,
+        defaultOpen,
         loc: pkg.loc,
       });
     }
@@ -224,10 +227,14 @@ PackageRef
   = _ "package" WS+ id:Alias _ NL
   { return { type: 'packageRef', id }; }
 
-// Package-level properties. Currently only `collapse_at: <N>px` is
-// recognised; other keys will produce a parse error so typos surface early.
+// Package-level properties.
+// `open: true` — the package starts expanded instead of as a closed
+// layer box. `collapse_at:` is a legacy no-op (zoom-based auto-collapse
+// was replaced by click-to-open layers); still parsed so old files load.
 PackageProp
-  = _ "collapse_at:" _ value:PixelValue _ NL
+  = _ "open:" _ value:BoolValue _ NL
+  { return { type: 'packageProp', key: 'open', value }; }
+  / _ "collapse_at:" _ value:PixelValue _ NL
   { return { type: 'packageProp', key: 'collapse_at', value }; }
 
 PixelValue
@@ -370,8 +377,10 @@ FlowProperty
   { return { key: 'color', value }; }
   / _ "after:" _ value:AfterList _ NL
   { return { key: 'after', value }; }
-  / _ "effect:" _ value:EffectKind _ NL
+  / _ "arrival_effect:" _ value:EffectKind _ NL
   { return { key: 'effect', value }; }
+  / _ "effect:" _ value:EffectKind _ NL
+  { return { key: 'effect', value }; }  // legacy alias for arrival_effect:
   / _ "trail:" _ value:BoolValue _ NL
   { return { key: 'trail', value }; }
   / _ Comment NL

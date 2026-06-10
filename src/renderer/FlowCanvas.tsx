@@ -42,6 +42,9 @@ interface GroupDragState {
   // Pointer offset relative to the group's top-left at drag start (in diagram coords).
   offsetX: number;
   offsetY: number;
+  /** True when the package was closed at drag start — a click (no movement)
+   *  then opens it on pointer-up instead of just selecting. */
+  wasCollapsed: boolean;
 }
 
 interface PanDragState {
@@ -202,8 +205,7 @@ export default function FlowCanvas() {
       panY: panRef.current.y,
       userZoom: zoomRef.current,
       exportFrame: useFlowStore.getState().showExportFrame ? useFlowStore.getState().exportFrame : null,
-      collapseThresholdPx: useFlowStore.getState().collapseThresholdPx,
-      manualCollapsed: useFlowStore.getState().manualCollapsed,
+      openPackages: useFlowStore.getState().openPackages,
       selectedIds: useFlowStore.getState().selectedIds,
       selectionKind: useFlowStore.getState().selectionKind,
       hoveredId: hoveredIdRef.current,
@@ -255,7 +257,7 @@ export default function FlowCanvas() {
     // When we know the scale, skip nodes hidden inside a collapsed ancestor
     // so clicks inside a collapsed package fall through to the group handle.
     const collapsed = effectiveScale !== undefined
-      ? computeCollapsedGroups(current, effectiveScale, useFlowStore.getState().collapseThresholdPx)
+      ? computeCollapsedGroups(current, useFlowStore.getState().openPackages)
       : null;
     const parentOf = new Map<string, string | undefined>();
     if (collapsed) {
@@ -339,9 +341,7 @@ export default function FlowCanvas() {
   const findToggleAt = useCallback((x: number, y: number, effectiveScale: number): LayoutGroup | null => {
     const current = useFlowStore.getState().layout;
     if (!current) return null;
-    const globalThreshold = useFlowStore.getState().collapseThresholdPx;
-    const manualCollapsed = useFlowStore.getState().manualCollapsed;
-    const collapsed = computeCollapsedGroups(current, effectiveScale, globalThreshold, manualCollapsed);
+    const collapsed = computeCollapsedGroups(current, useFlowStore.getState().openPackages);
     const zc = zoomCompensation(effectiveScale);
 
     const parentOf = new Map<string, string | undefined>();
@@ -383,11 +383,10 @@ export default function FlowCanvas() {
    *   • Innermost wins when multiple groups overlap (collapsed siblings
    *     nested inside one another, for instance).
    */
-  const findGroupHandleAt = useCallback((x: number, y: number, effectiveScale: number): LayoutGroup | null => {
+  const findGroupHandleAt = useCallback((x: number, y: number, _effectiveScale: number): LayoutGroup | null => {
     const current = useFlowStore.getState().layout;
     if (!current) return null;
-    const globalThreshold = useFlowStore.getState().collapseThresholdPx;
-    const collapsed = computeCollapsedGroups(current, effectiveScale, globalThreshold);
+    const collapsed = computeCollapsedGroups(current, useFlowStore.getState().openPackages);
 
     // Sort by depth descending — innermost first.
     const parentOf = new Map<string, string | undefined>();
@@ -600,7 +599,9 @@ export default function FlowCanvas() {
     if (tForNode) {
       const togglePkg = findToggleAt(coords.x, coords.y, tForNode.transform.scale);
       if (togglePkg) {
-        useFlowStore.getState().toggleManualCollapsed(togglePkg.id);
+        const { openPackages, togglePackageOpen } = useFlowStore.getState();
+        const open = openPackages[togglePkg.id] ?? togglePkg.defaultOpen ?? false;
+        togglePackageOpen(togglePkg.id, open);
         e.preventDefault();
         return;
       }
@@ -631,12 +632,15 @@ export default function FlowCanvas() {
     if (t) {
       const group = findGroupHandleAt(coords.x, coords.y, t.transform.scale);
       if (group) {
+        const { openPackages } = useFlowStore.getState();
+        const isOpen = openPackages[group.id] ?? group.defaultOpen ?? false;
         useFlowStore.getState().setSelection(group.id, 'group');
         dragRef.current = {
           kind: 'group',
           groupId: group.id,
           offsetX: coords.x - group.x,
           offsetY: coords.y - group.y,
+          wasCollapsed: !isOpen,
         };
         canvas.style.cursor = 'grabbing';
         e.preventDefault();
@@ -890,6 +894,17 @@ export default function FlowCanvas() {
     }
 
     if (drag.kind === 'pan' || drag.kind === 'frame-move' || drag.kind === 'frame-resize') return;
+
+    // Click (no movement) on a closed package opens it — the core layered-
+    // packages interaction. An actual drag moves the closed box instead.
+    if (
+      drag.kind === 'group' &&
+      drag.wasCollapsed &&
+      !movedGroupsThisSessionRef.current.has(drag.groupId)
+    ) {
+      useFlowStore.getState().setPackageOpen(drag.groupId, true);
+      return;
+    }
 
     // Commit moved node + group positions to source text.
     const currentLayout = useFlowStore.getState().layout;

@@ -843,7 +843,7 @@ function buildFlowLines(opts: {
   if (direction === 'reverse') lines.push(`  direction: reverse`);
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
   if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
-  if (opts.arrivalEffect) lines.push(`  effect: ${opts.arrivalEffect}`);
+  if (opts.arrivalEffect) lines.push(`  arrival_effect: ${opts.arrivalEffect}`);
   if (opts.trail !== undefined) lines.push(`  trail: ${opts.trail}`);
   return lines;
 }
@@ -1273,7 +1273,7 @@ export function deleteGroup(text: string, doc: FlowDocument, id: string): string
 }
 
 /**
- * Update a package: displayName, color, or collapseAtPx. The package
+ * Update a package: displayName, color, collapseAtPx, or defaultOpen. The package
  * declaration's header (`package "X" as p [#color] {`) is re-serialized in
  * place. collapseAtPx is patched separately by replacing/inserting/removing
  * the `collapse_at:` line within the package body. Children and nested
@@ -1287,6 +1287,9 @@ export function updateGroup(
     displayName?: string;
     color?: string | null;
     collapseAtPx?: number | null;
+    /** true → `open: true` line (starts expanded); null → remove the line
+     *  (starts closed, the layered-package default). */
+    defaultOpen?: boolean | null;
   },
 ): string {
   const group = doc.groups.find((g) => g.id === id);
@@ -1311,14 +1314,49 @@ export function updateGroup(
 
   // collapseAtPx side-effects. Recompute the (possibly shifted) loc by
   // measuring the new header length vs the old header length.
+  const shift = newHeader.length - (braceIdx + 1 - group.loc.start);
+  const newGroupStart = group.loc.start;
+  let newGroupEnd = group.loc.end + shift;
   if ('collapseAtPx' in updates) {
-    const shift = newHeader.length - (braceIdx + 1 - group.loc.start);
-    const newGroupStart = group.loc.start;
-    const newGroupEnd = group.loc.end + shift;
+    const before = next.length;
     next = applyCollapseAtPx(next, newGroupStart, newGroupEnd, indent, updates.collapseAtPx ?? null);
+    newGroupEnd += next.length - before;
+  }
+  if ('defaultOpen' in updates) {
+    next = applyPackageBoolLine(next, newGroupStart, newGroupEnd, indent, 'open', updates.defaultOpen ?? null);
   }
 
   return next;
+}
+
+/** Replace, insert, or remove a boolean property line (e.g. `open: true`)
+ *  inside a package body. null removes the line. */
+function applyPackageBoolLine(
+  text: string,
+  groupStart: number,
+  groupEnd: number,
+  outerIndent: string,
+  key: string,
+  value: boolean | null,
+): string {
+  const bodyIndent = outerIndent + '  ';
+  const slice = text.slice(groupStart, groupEnd);
+  const re = new RegExp(`^[ \\t]*${key}:\\s*[^\\n]*\\n`, 'm');
+  const m = slice.match(re);
+  if (m && m.index !== undefined) {
+    const lineStart = groupStart + m.index;
+    const lineEnd = lineStart + m[0]!.length;
+    if (value === null) {
+      return text.slice(0, lineStart) + text.slice(lineEnd);
+    }
+    return text.slice(0, lineStart) + `${bodyIndent}${key}: ${value}\n` + text.slice(lineEnd);
+  }
+  if (value === null) return text;
+  const headerNewline = text.indexOf('\n', groupStart);
+  if (headerNewline === -1 || headerNewline > groupEnd) return text;
+  return text.slice(0, headerNewline + 1)
+    + `${bodyIndent}${key}: ${value}\n`
+    + text.slice(headerNewline + 1);
 }
 
 /** Replace, insert, or remove the `collapse_at:` line inside a package body. */
@@ -1463,7 +1501,7 @@ export function updateFlow(
   if (direction === 'reverse') body.push(`  direction: reverse`);
   if (color) body.push(`  color: #${color.replace(/^#/, '')}`);
   if (after.length > 0) body.push(`  after: ${after.join(', ')}`);
-  if (arrivalEffect) body.push(`  effect: ${arrivalEffect}`);
+  if (arrivalEffect) body.push(`  arrival_effect: ${arrivalEffect}`);
   if (trail !== undefined && trail !== null) body.push(`  trail: ${trail}`);
 
   const block = body.map((l) => indent + l).join('\n') + '\n';

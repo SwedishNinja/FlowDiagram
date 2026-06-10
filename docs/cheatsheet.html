@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FlowDiagram DSL Cheatsheet</title>
+<style>
+  :root {
+    --bg: #0f172a;
+    --card: #1e293b;
+    --card-edge: #334155;
+    --ink: #e2e8f0;
+    --ink-dim: #94a3b8;
+    --ink-faint: #64748b;
+    --blue: #60a5fa;
+    --red: #f87171;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --violet: #a78bfa;
+    --pink: #f472b6;
+    --cyan: #22d3ee;
+    --orange: #fb923c;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 28px 32px 48px;
+  }
+  header { margin-bottom: 24px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  h1 .accent { color: var(--blue); }
+  header .sub { color: var(--ink-dim); font-size: 13px; }
+  header .ver {
+    margin-left: auto; font: 12px var(--mono); color: var(--ink-faint);
+    border: 1px solid var(--card-edge); border-radius: 99px; padding: 2px 10px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(370px, 1fr));
+    gap: 16px;
+    align-items: start;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-edge);
+    border-radius: 10px;
+    padding: 14px 16px 16px;
+    break-inside: avoid;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 1.2px;
+    color: var(--ink-dim); margin-bottom: 10px; display: flex; align-items: center; gap: 8px;
+  }
+  h2::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--blue); display: inline-block; }
+  .card.c-red    h2::before { background: var(--red); }
+  .card.c-green  h2::before { background: var(--green); }
+  .card.c-amber  h2::before { background: var(--amber); }
+  .card.c-violet h2::before { background: var(--violet); }
+  .card.c-pink   h2::before { background: var(--pink); }
+  .card.c-cyan   h2::before { background: var(--cyan); }
+  .card.c-orange h2::before { background: var(--orange); }
+  pre {
+    background: #0b1120;
+    border: 1px solid #1e293b;
+    border-radius: 7px;
+    padding: 10px 12px;
+    font: 12.5px/1.55 var(--mono);
+    overflow-x: auto;
+    margin: 8px 0;
+  }
+  code { font: 0.92em var(--mono); background: #0b1120; padding: 1px 5px; border-radius: 4px; color: var(--cyan); white-space: nowrap; }
+  .k  { color: var(--violet); }            /* keywords: component, package, @flow … */
+  .p  { color: var(--blue); }              /* property names */
+  .s  { color: var(--amber); }             /* strings */
+  .n  { color: var(--green); }             /* numbers / values */
+  .c  { color: var(--ink-faint); font-style: italic; } /* comments */
+  .a  { color: var(--pink); }              /* arrows / operators */
+  p, li { color: var(--ink-dim); font-size: 13px; }
+  p strong, li strong { color: var(--ink); font-weight: 600; }
+  ul { padding-left: 18px; margin: 6px 0; }
+  li { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+  th { text-align: left; color: var(--ink-faint); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--card-edge); }
+  td { padding: 5px 8px 5px 0; border-bottom: 1px solid #26344a; vertical-align: top; color: var(--ink-dim); }
+  td:first-child { white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+  .pill {
+    display: inline-block; font: 11px var(--mono); border-radius: 99px; padding: 1px 9px;
+    border: 1px solid var(--card-edge); color: var(--ink-dim); margin: 2px 3px 2px 0;
+  }
+  .effects { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-top: 8px; }
+  .fx {
+    border: 1px solid var(--card-edge); border-radius: 8px; padding: 10px 12px; background: #16213a;
+  }
+  .fx b { display: block; color: var(--ink); font-size: 13px; margin-bottom: 3px; }
+  .fx b code { color: var(--cyan); font-size: 11.5px; }
+  .fx p { font-size: 12px; }
+  .note {
+    margin-top: 10px; border-left: 3px solid var(--blue); background: #16213a;
+    border-radius: 0 7px 7px 0; padding: 8px 12px; font-size: 12.5px; color: var(--ink-dim);
+  }
+  .note.red { border-left-color: var(--red); }
+  @media print {
+    body { background: #fff; color: #111; }
+    .card { border-color: #ccc; background: #fff; }
+    pre { background: #f5f5f5; border-color: #ddd; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flow<span class="accent">Diagram</span> — DSL Cheatsheet</h1>
+  <span class="sub">Everything you can write between <code>@startuml</code> and <code>@enduml</code></span>
+  <span class="ver">v1.10.0</span>
+</header>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>Document skeleton</h2>
+<pre><span class="k">@startuml</span>
+<span class="c">' single-line comment</span>
+<span class="c">/' block
+   comment '/</span>
+
+<span class="c">… components, connections, flows, stages …</span>
+<span class="k">@enduml</span></pre>
+    <p>Every diagram is wrapped in <code>@startuml</code> / <code>@enduml</code>. Blank lines are fine anywhere.</p>
+  </div>
+
+  <div class="card c-green">
+    <h2>Components (boxes)</h2>
+<pre><span class="k">component</span> <span class="s">"API Gateway"</span> <span class="k">as</span> gw
+<span class="k">component</span> <span class="s">"Auth"</span> <span class="k">as</span> auth <span class="n">#10b981</span>
+<span class="k">component</span> <span class="s">"User DB"</span> <span class="k">as</span> db <span class="n">#blue</span> <span class="a">&lt;&lt;database&gt;&gt;</span>
+[Cache] <span class="k">as</span> cache          <span class="c">' bracket shorthand</span></pre>
+    <ul>
+      <li><strong>alias</strong> (after <code>as</code>) is what connections refer to</li>
+      <li><code>#color</code> — hex (no quotes) or a named color, tints the box</li>
+      <li><code>&lt;&lt;stereotype&gt;&gt;</code> — small category label inside the box</li>
+    </ul>
+  </div>
+
+  <div class="card c-pink">
+    <h2>Connections (lines)</h2>
+<pre>gw <span class="a">-&gt;</span> auth <span class="k">as</span> auth_conn : authenticate
+auth <span class="a">..&gt;</span> db                 <span class="c">' dotted</span>
+gw <span class="a">&lt;-&gt;</span> cache                <span class="c">' bidirectional</span>
+auth <span class="a">--&gt;</span> log                <span class="c">' long arrow</span></pre>
+    <table>
+      <tr><th>Arrow</th><th>Meaning</th></tr>
+      <tr><td><code>-&gt;</code></td><td>solid, forward arrowhead</td></tr>
+      <tr><td><code>--&gt;</code></td><td>solid, long-form arrow</td></tr>
+      <tr><td><code>..&gt;</code></td><td>dotted line</td></tr>
+      <tr><td><code>&lt;-&gt;</code></td><td>bidirectional arrowheads</td></tr>
+    </table>
+    <p><code>as name</code> names the connection so flows can ride it; <code>: label</code> draws a text label. Unnamed connections get auto-ids.</p>
+  </div>
+
+  <div class="card c-amber">
+    <h2>Packages (groups)</h2>
+<pre><span class="k">package</span> <span class="s">"Backend"</span> <span class="k">as</span> backend <span class="n">#475569</span> {
+  <span class="p">open:</span> <span class="n">true</span>          <span class="c">' start expanded</span>
+  <span class="k">component</span> <span class="s">"Auth"</span> <span class="k">as</span> auth
+  <span class="k">package</span> <span class="s">"Storage"</span> <span class="k">as</span> storage {
+    <span class="k">component</span> <span class="s">"DB"</span> <span class="k">as</span> db
+  }
+  <span class="k">package</span> shared       <span class="c">' reference: adopt a</span>
+}                        <span class="c">'   package declared elsewhere</span></pre>
+    <ul>
+      <li>Nest packages to any depth; they auto-resize to fit their contents</li>
+      <li>Packages are <strong>layers</strong>: closed (single box) until clicked open. <code>open: true</code> starts a package expanded</li>
+      <li><code>package alias</code> (no quotes, no braces) pulls another package into this one</li>
+    </ul>
+  </div>
+
+  <div class="card wide c-cyan">
+    <h2>Flows (animated dots) — all properties</h2>
+<pre><span class="k">@flow</span> login <span class="k">on</span> auth_conn
+  <span class="p">data:</span> <span class="s">"JWT token"</span>       <span class="p">speed:</span> <span class="n">150</span>              <span class="p">direction:</span> <span class="n">forward</span>
+  <span class="p">every:</span> <span class="n">500ms</span>            <span class="p">start_delay:</span> <span class="n">200ms</span>      <span class="p">color:</span> <span class="n">#FF0088</span>
+  <span class="p">after:</span> other_flow  <span class="p">arrival_effect:</span> <span class="n">ripple</span>          <span class="p">trail:</span> <span class="n">true</span></pre>
+    <table>
+      <tr><th>Property</th><th>Example</th><th>What it does</th></tr>
+      <tr><td><code>data:</code></td><td><code>"JWT token"</code></td><td>Text label carried by the leading dot</td></tr>
+      <tr><td><code>every:</code></td><td><code>500ms</code> · <code>2s</code> · <code>1m</code></td><td>Spawn interval — makes the flow <strong>continuous</strong></td></tr>
+      <tr><td><code>freq:</code></td><td><code>10/s</code> · <code>30/m</code></td><td>Same as <code>every:</code>, expressed as a rate</td></tr>
+      <tr><td><code>speed:</code></td><td><code>150</code></td><td>Constant dot speed in px/s — travel time = line length ÷ speed. <strong>Default: 150</strong></td></tr>
+      <tr><td><code>traverse_time:</code></td><td><code>1s</code></td><td>Legacy alternative: fixed time per line regardless of length (overrides <code>speed</code>)</td></tr>
+      <tr><td><code>start_delay:</code></td><td><code>200ms</code></td><td>Wait before first spawn; for dependent flows, per-arrival latency</td></tr>
+      <tr><td><code>direction:</code></td><td><code>forward</code> · <code>reverse</code></td><td><code>reverse</code> travels target → source on the same line (request/response)</td></tr>
+      <tr><td><code>color:</code></td><td><code>#FF0088</code> · <code>red</code></td><td>Dot color; omit to auto-assign from the palette</td></tr>
+      <tr><td><code>after:</code></td><td><code>flow_a, flow_b</code></td><td>Dependent flow: fires <strong>once per upstream arrival</strong> (all listed must arrive)</td></tr>
+      <tr><td><code>arrival_effect:</code></td><td><code>sparks</code></td><td>Arrival effect override — see the effects card</td></tr>
+      <tr><td><code>trail:</code></td><td><code>true</code> · <code>false</code></td><td>Comet trail on/off for this flow</td></tr>
+    </table>
+    <div class="note">
+      <strong>Three spawn modes:</strong> a rate (<code>every:</code>/<code>freq:</code>) → continuous &nbsp;·&nbsp;
+      <code>after:</code> → event-driven, one dot per upstream arrival &nbsp;·&nbsp;
+      neither → <strong>one-shot</strong>: exactly one dot (per stage run, or once per replay).
+    </div>
+  </div>
+
+  <div class="card c-violet">
+    <h2>Stages (scenario phases)</h2>
+<pre><span class="k">@stage</span> login
+  <span class="k">@flow</span> post_login <span class="k">on</span> auth_conn
+  <span class="k">@flow</span> token <span class="k">on</span> result_conn
+    <span class="p">direction:</span> <span class="n">reverse</span>
+    <span class="p">after:</span> post_login
+<span class="k">@end_stage</span>
+
+<span class="k">@stage</span> sync
+  <span class="p">after:</span> login         <span class="c">' waits for login</span>
+  <span class="p">repeat:</span> <span class="n">true</span>         <span class="c">' loops forever</span>
+  <span class="k">@flow</span> fetch <span class="k">on</span> db_conn
+<span class="k">@end_stage</span></pre>
+    <ul>
+      <li>Lifecycle: <strong>idle → running → completed</strong>. No <code>after:</code> → starts immediately</li>
+      <li>Completes when <strong>every flow inside arrived at least once</strong> this run</li>
+      <li><code>after: a, b</code> — starts when all listed stages freshly complete</li>
+      <li><code>repeat: true</code> — restarts after completing</li>
+      <li>Flows without a rate fire <strong>once per stage run</strong></li>
+    </ul>
+  </div>
+
+  <div class="card c-orange">
+    <h2>Diagram settings &amp; positions</h2>
+<pre><span class="c">' top-level defaults for every flow:</span>
+<span class="p">arrival_effect:</span> <span class="n">ripple</span>
+<span class="p">trail:</span> <span class="n">true</span>
+
+<span class="k">@positions</span>          <span class="c">' pin layout coordinates</span>
+  gw: <span class="n">0</span>, <span class="n">0</span>
+  auth: <span class="n">220</span>, <span class="n">-40</span></pre>
+    <ul>
+      <li><code>arrival_effect:</code> — default effect: <code>dissolve</code> (the default) · <code>outline</code> · <code>ripple</code> · <code>fill</code> · <code>sparks</code> · <code>none</code></li>
+      <li><code>trail:</code> — comet trails on by default (<code>false</code> if omitted)</li>
+      <li><code>@positions</code> — written automatically when you drag boxes; negative coords allowed</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Units &amp; named colors</h2>
+    <p><strong>Durations:</strong> <span class="pill">500ms</span> <span class="pill">2s</span> <span class="pill">1m</span>
+       &nbsp;<strong>Rates:</strong> <span class="pill">10/s</span> <span class="pill">30/m</span>
+       &nbsp;<strong>Speed:</strong> <span class="pill">150</span> <span class="pill">150px/s</span></p>
+    <p style="margin-top:8px"><strong>Named colors</strong> (anywhere a color is accepted):</p>
+    <p style="margin-top:4px">
+      <span class="pill"><span class="sw" style="background:#ef4444"></span>red</span>
+      <span class="pill"><span class="sw" style="background:#3b82f6"></span>blue</span>
+      <span class="pill"><span class="sw" style="background:#10b981"></span>green</span>
+      <span class="pill"><span class="sw" style="background:#eab308"></span>yellow</span>
+      <span class="pill"><span class="sw" style="background:#f59e0b"></span>amber</span>
+      <span class="pill"><span class="sw" style="background:#f97316"></span>orange</span>
+      <span class="pill"><span class="sw" style="background:#a855f7"></span>purple</span>
+      <span class="pill"><span class="sw" style="background:#8b5cf6"></span>violet</span>
+      <span class="pill"><span class="sw" style="background:#ec4899"></span>pink</span>
+      <span class="pill"><span class="sw" style="background:#06b6d4"></span>cyan</span>
+      <span class="pill"><span class="sw" style="background:#14b8a6"></span>teal</span>
+      <span class="pill"><span class="sw" style="background:#84cc16"></span>lime</span>
+      <span class="pill"><span class="sw" style="background:#6b7280"></span>gray</span>
+      <span class="pill"><span class="sw" style="background:#000"></span>black</span>
+      <span class="pill"><span class="sw" style="background:#fff"></span>white</span>
+    </p>
+    <p style="margin-top:8px">Hex works with or without quotes: <code>#FF0088</code>, <code>#abc</code>. Flows without <code>color:</code> cycle through
+      <span class="sw" style="background:#3b82f6"></span><span class="sw" style="background:#ef4444"></span><span class="sw" style="background:#10b981"></span><span class="sw" style="background:#f59e0b"></span><span class="sw" style="background:#8b5cf6"></span><span class="sw" style="background:#ec4899"></span><span class="sw" style="background:#06b6d4"></span><span class="sw" style="background:#f97316"></span>.
+    </p>
+  </div>
+
+  <div class="card wide c-red">
+    <h2>Arrival effects — what happens when a dot hits a box</h2>
+    <div class="effects">
+      <div class="fx"><b>dissolve <code>(default)</code></b>
+        <p>Ink-drop absorption: a colored plume diffuses into the box from the entry direction and fades out, like dye in water.</p></div>
+      <div class="fx"><b>outline</b>
+        <p>The box border lights up from the hit point, spreading both ways with a soft outer glow, then fades.</p></div>
+      <div class="fx"><b>ripple</b>
+        <p>Sonar rings expand from the hit point across the box and fade out.</p></div>
+      <div class="fx"><b>fill</b>
+        <p>Liquid pours in from the entry side behind an animated wavy surface, fills ~40% of the box, then evaporates.</p></div>
+      <div class="fx"><b>sparks</b>
+        <p>The dot shatters into eight sparks that scatter into the box on curved paths and burn out.</p></div>
+      <div class="fx"><b>none</b>
+        <p>No effect — and no arrival delay: the arrival counts immediately. Use for instant chaining.</p></div>
+    </div>
+    <div class="note">
+      <strong>Timing:</strong> with any effect (except <code>none</code>) an arrival only <em>counts</em> — for <code>after:</code> dependencies and stage completion —
+      once the effect finishes (~1&nbsp;s). Downstream flows and the next stage wait for it.
+    </div>
+    <div class="note red">
+      <strong>Handoff re-condensation:</strong> when the journey continues from that box (a dependent flow or the next stage departs from the same node),
+      every effect plays a two-act version: it runs ~halfway, then <em>reverses toward the exact point where the outgoing line departs</em> —
+      the plume re-condenses, the outline segment slides around the border, ripples contract, the liquid drains out through the exit,
+      sparks swarm back together — morphing into the next flow's color and landing exactly as the next dot spawns. One continuous substance.
+    </div>
+  </div>
+
+  <div class="card c-cyan">
+    <h2>Comet trail</h2>
+<pre><span class="p">trail:</span> <span class="n">true</span>            <span class="c">' diagram-wide default</span>
+
+<span class="k">@flow</span> stream <span class="k">on</span> pipe
+  <span class="p">trail:</span> <span class="n">false</span>        <span class="c">' per-flow override</span></pre>
+    <p>The line glows behind the moving dot like a cooling comet tail; after the dot arrives the wake fades out in place.
+       Composes with <em>any</em> arrival effect and never delays arrivals or stages.</p>
+  </div>
+
+  <div class="card c-green">
+    <h2>Quick recipe — relay with effects</h2>
+<pre><span class="k">@startuml</span>
+<span class="p">arrival_effect:</span> <span class="n">ripple</span>
+<span class="p">trail:</span> <span class="n">true</span>
+
+<span class="k">component</span> <span class="s">"Web"</span> <span class="k">as</span> web
+<span class="k">component</span> <span class="s">"API"</span> <span class="k">as</span> api
+<span class="k">component</span> <span class="s">"DB"</span>  <span class="k">as</span> db
+web <span class="a">-&gt;</span> api <span class="k">as</span> req
+api <span class="a">-&gt;</span> db  <span class="k">as</span> query
+
+<span class="k">@stage</span> request
+  <span class="p">repeat:</span> <span class="n">true</span>
+  <span class="k">@flow</span> call <span class="k">on</span> req
+    <span class="p">color:</span> <span class="n">blue</span>
+  <span class="k">@flow</span> lookup <span class="k">on</span> query
+    <span class="p">color:</span> <span class="n">red</span>
+    <span class="p">arrival_effect:</span> <span class="n">sparks</span>
+    <span class="p">after:</span> call
+<span class="k">@end_stage</span>
+<span class="k">@enduml</span></pre>
+    <p>Blue dot → ripple re-condenses at the API exit while <em>morphing to red</em> → red dot sparks into the DB. Repeats forever.</p>
+  </div>
+
+</div>
+
+</body>
+</html>

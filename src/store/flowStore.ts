@@ -34,18 +34,13 @@ export interface FlowStore {
   setShowExportFrame: (v: boolean) => void;
   setExportFrame: (frame: { x: number; y: number; width: number; height: number } | null) => void;
 
-  // Collapse threshold: when a package renders narrower than this (CSS px),
-  // its contents hide and flows reroute to its border. Overridden per-package
-  // via the DSL `collapse_at:` property inside a package block.
-  collapseThresholdPx: number;
-  setCollapseThresholdPx: (px: number) => void;
-
-  /** IDs of packages the user has manually pinned collapsed. Union with the
-   *  auto-collapsed set forms the effective collapsed set. In-memory only;
-   *  resets on reload (persist via `collapse_at: 99999px` in the DSL if you
-   *  want a permanent collapse). */
-  manualCollapsed: Record<string, true>;
-  toggleManualCollapsed: (id: string) => void;
+  /** Layered packages: per-package open/closed overrides for this session.
+   *  Absent id → the package's DSL default (`open: true`), else closed.
+   *  Clicking a closed package opens it; the header toggle closes it.
+   *  In-memory only; persist a default with `open: true` in the DSL. */
+  openPackages: Record<string, boolean>;
+  setPackageOpen: (id: string, open: boolean) => void;
+  togglePackageOpen: (id: string, currentlyOpen: boolean) => void;
 
   /** Monotonically bumped to request that the renderer reset all particles
    *  and stages. Any consumer can subscribe and react. */
@@ -165,16 +160,13 @@ export const useFlowStore = create<FlowStore>()(
     setShowExportFrame: (v) => set({ showExportFrame: v }),
     setExportFrame: (exportFrame) => set({ exportFrame }),
 
-    collapseThresholdPx: 1,
-    setCollapseThresholdPx: (collapseThresholdPx) => set({ collapseThresholdPx }),
-
-    manualCollapsed: {},
-    toggleManualCollapsed: (id) => set((s) => {
-      const next = { ...s.manualCollapsed };
-      if (next[id]) delete next[id];
-      else next[id] = true;
-      return { manualCollapsed: next };
-    }),
+    openPackages: {},
+    setPackageOpen: (id, open) => set((s) => ({
+      openPackages: { ...s.openPackages, [id]: open },
+    })),
+    togglePackageOpen: (id, currentlyOpen) => set((s) => ({
+      openPackages: { ...s.openPackages, [id]: !currentlyOpen },
+    })),
 
     particleResetSignal: 0,
     triggerParticleReset: () => set((s) => ({ particleResetSignal: s.particleResetSignal + 1 })),

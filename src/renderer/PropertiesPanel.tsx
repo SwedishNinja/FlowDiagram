@@ -740,8 +740,15 @@ function GroupForm({ group }: { group: GroupNode }) {
       <Field label="Color">
         <ColorInput value={group.color} onCommit={(v) => commit({ color: v })} />
       </Field>
-      <Field label="Collapse at (px)">
-        <CollapseAtInput initial={group.collapseAtPx} onCommit={(v) => commit({ collapseAtPx: v })} />
+      <Field label="Starts open">
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={!!group.defaultOpen}
+            onChange={(e) => commit({ defaultOpen: e.target.checked ? true : null })}
+          />
+          <span style={{ color: 'var(--ink-4)', fontSize: 'var(--fs-xs)' }}>Expanded on load (else a closed layer)</span>
+        </label>
       </Field>
       <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
         <button type="button" onClick={ungroup} style={ghostButtonStyle}>Ungroup</button>
@@ -1016,33 +1023,6 @@ function NumberInput({ initial, min, onCommit }: { initial: number; min?: number
   );
 }
 
-function CollapseAtInput({ initial, onCommit }: { initial: number | undefined; onCommit: (v: number | null) => void }) {
-  const [value, setValue] = useState(initial === undefined ? '' : String(initial));
-  const [focused, setFocused] = useState(false);
-  useEffect(() => { if (!focused) setValue(initial === undefined ? '' : String(initial)); }, [initial, focused]);
-  const commit = () => {
-    const trimmed = value.trim();
-    if (trimmed === '') { if (initial !== undefined) onCommit(null); return; }
-    const n = Number(trimmed);
-    if (!Number.isFinite(n) || n <= 0) { setValue(initial === undefined ? '' : String(initial)); return; }
-    if (n !== initial) onCommit(n);
-  };
-  return (
-    <div style={{ display: 'flex', gap: 6 }}>
-      <input
-        type="number" min={20} value={value} placeholder="(inherit default)"
-        onChange={(e) => setValue(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => { setFocused(false); commit(); }}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); else if (e.key === 'Escape') { setValue(initial === undefined ? '' : String(initial)); e.currentTarget.blur(); } }}
-        style={{ ...inputStyle, flex: 1 }}
-      />
-      {initial !== undefined && (
-        <button type="button" onClick={() => onCommit(null)} style={ghostButtonStyle}>Clear</button>
-      )}
-    </div>
-  );
-}
 
 function Segmented({ options, value, onChange }: { options: { value: string; label: string; title?: string }[]; value: string; onChange: (next: string) => void }) {
   return (

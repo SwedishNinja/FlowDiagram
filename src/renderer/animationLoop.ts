@@ -3,29 +3,24 @@ import { drawGraph, computeEffectiveEdges, zoomCompensation } from './drawGraph'
 import { ParticleSystem } from './particles';
 import { drawParticles, drawArrivalEffects, nodeLookupFromLayout } from './drawParticles';
 
-const DEFAULT_COLLAPSE_THRESHOLD_PX = 200;
-
 /**
- * Determine which groups are currently collapsed based on their rendered
- * on-screen width against either a per-group `collapseAtPx` or the global
- * default. An outer collapsed group implicitly collapses its descendants,
- * but descendants are kept out of the set (renderer walks ancestors).
+ * Layered packages: every package is either OPEN (contents visible) or
+ * CLOSED (drawn as a single layer box; click to open). A package is open
+ * when the user toggled it open this session (`openPackages[id]`), or when
+ * the DSL declares `open: true` and the user hasn't overridden it. Closed
+ * is the default — diagrams present as layers you drill into.
+ *
+ * An outer closed group implicitly hides its descendants, but descendants
+ * are kept out of the set (renderer walks ancestors).
  */
 export function computeCollapsedGroups(
   layout: LayoutResult,
-  effectiveScale: number,
-  globalThresholdPx: number = DEFAULT_COLLAPSE_THRESHOLD_PX,
-  manualCollapsed: Record<string, true> = {},
+  openPackages: Record<string, boolean> = {},
 ): Set<string> {
   const collapsed = new Set<string>();
   for (const group of layout.groups) {
-    if (manualCollapsed[group.id]) {
-      collapsed.add(group.id);
-      continue;
-    }
-    const threshold = group.collapseAtPx ?? globalThresholdPx;
-    const renderedWidth = group.width * effectiveScale;
-    if (renderedWidth < threshold) collapsed.add(group.id);
+    const open = openPackages[group.id] ?? group.defaultOpen ?? false;
+    if (!open) collapsed.add(group.id);
   }
   return collapsed;
 }
@@ -118,10 +113,9 @@ export function createAnimationLoop(
     panY?: number;
     userZoom?: number;
     exportFrame?: { x: number; y: number; width: number; height: number } | null;
-    /** Global collapse threshold in CSS px. Overridden per-package via `collapse_at:` in the DSL. */
-    collapseThresholdPx?: number;
-    /** User-pinned collapsed packages (force collapsed regardless of zoom). */
-    manualCollapsed?: Record<string, true>;
+    /** Per-package open/closed overrides (layered packages). Absent id →
+     *  the package's DSL default (`open: true`), else closed. */
+    openPackages?: Record<string, boolean>;
     /** Currently selected entity IDs — paired with selectionKind to decide
      *  whether to highlight nodes or edges. */
     selectedIds?: ReadonlyArray<string> | null;
@@ -173,13 +167,8 @@ export function createAnimationLoop(
       state.panX ?? 0, state.panY ?? 0, state.userZoom ?? 1,
     );
 
-    // Per-frame: which groups are collapsed, and how to reroute edges.
-    const collapsedGroups = computeCollapsedGroups(
-      currentLayout,
-      scale,
-      state.collapseThresholdPx,
-      state.manualCollapsed,
-    );
+    // Per-frame: which groups are closed, and how to reroute edges.
+    const collapsedGroups = computeCollapsedGroups(currentLayout, state.openPackages);
     const effectiveEdges = computeEffectiveEdges(currentLayout, collapsedGroups);
 
     ctx.save();
