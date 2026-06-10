@@ -136,6 +136,169 @@ function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w:
   ctx.closePath();
 }
 
+/** Closed sample polyline of a rounded-rect border, with cumulative arc
+ *  lengths — lets the outline effect light up and slide along the border. */
+interface Perimeter {
+  pts: Point[];
+  cum: number[]; // cum[i] = arc length from pts[0] to pts[i]; last = total
+  total: number;
+}
+
+function buildPerimeter(node: NodeRect, r: number): Perimeter {
+  const { x, y, width: w, height: h } = node;
+  const rad = Math.min(r, w / 2, h / 2);
+  const pts: Point[] = [];
+  // Each corner arc sampled at 4 steps — smooth enough at border widths.
+  const corner = (cx: number, cy: number, a0: number, a1: number) => {
+    for (let i = 0; i <= 4; i++) {
+      const a = a0 + ((a1 - a0) * i) / 4;
+      pts.push({ x: cx + Math.cos(a) * rad, y: cy + Math.sin(a) * rad });
+    }
+  };
+  // Clockwise from the top-left corner's end.
+  pts.push({ x: x + rad, y });
+  pts.push({ x: x + w - rad, y });
+  corner(x + w - rad, y + rad, -Math.PI / 2, 0);
+  pts.push({ x: x + w, y: y + h - rad });
+  corner(x + w - rad, y + h - rad, 0, Math.PI / 2);
+  pts.push({ x: x + rad, y: y + h });
+  corner(x + rad, y + h - rad, Math.PI / 2, Math.PI);
+  pts.push({ x, y: y + rad });
+  corner(x + rad, y + rad, Math.PI, Math.PI * 1.5);
+  pts.push({ x: x + rad, y }); // close
+
+  const cum: number[] = [0];
+  for (let i = 1; i < pts.length; i++) {
+    cum.push(cum[i - 1]! + Math.hypot(pts[i]!.x - pts[i - 1]!.x, pts[i]!.y - pts[i - 1]!.y));
+  }
+  return { pts, cum, total: cum[cum.length - 1]! };
+}
+
+/** Arc-length parameter of the perimeter point nearest to `p`. */
+function nearestPerimeterParam(perim: Perimeter, p: Point): number {
+  let bestS = 0;
+  let bestD = Infinity;
+  for (let i = 1; i < perim.pts.length; i++) {
+    const a = perim.pts[i - 1]!;
+    const b = perim.pts[i]!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0;
+    const qx = a.x + dx * t;
+    const qy = a.y + dy * t;
+    const d = (p.x - qx) * (p.x - qx) + (p.y - qy) * (p.y - qy);
+    if (d < bestD) {
+      bestD = d;
+      bestS = perim.cum[i - 1]! + Math.sqrt(len2) * t;
+    }
+  }
+  return bestS;
+}
+
+function pointAtPerimeter(perim: Perimeter, s: number): Point {
+  s = ((s % perim.total) + perim.total) % perim.total;
+  for (let i = 1; i < perim.cum.length; i++) {
+    if (perim.cum[i]! >= s) {
+      const a = perim.pts[i - 1]!;
+      const b = perim.pts[i]!;
+      const seg = perim.cum[i]! - perim.cum[i - 1]!;
+      const t = seg > 0 ? (s - perim.cum[i - 1]!) / seg : 0;
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+  }
+  return { ...perim.pts[perim.pts.length - 1]! };
+}
+
+/** Trace the border from arc length `from` to `to` (may wrap past 0). */
+function pathAlongPerimeter(ctx: CanvasRenderingContext2D, perim: Perimeter, from: number, to: number) {
+  if (to < from) to += perim.total;
+  ctx.beginPath();
+  const start = pointAtPerimeter(perim, from);
+  ctx.moveTo(start.x, start.y);
+  // Walk vertices whose (unwrapped) arc length lies inside (from, to).
+  for (let s = from; s < to; ) {
+    const sm = ((s % perim.total) + perim.total) % perim.total;
+    // Next vertex strictly after sm.
+    let next = perim.total;
+    for (let i = 0; i < perim.cum.length; i++) {
+      if (perim.cum[i]! > sm + 1e-6) { next = perim.cum[i]!; break; }
+    }
+    const advance = next - sm;
+    s += advance;
+    const p = pointAtPerimeter(perim, Math.min(s, to));
+    ctx.lineTo(p.x, p.y);
+    if (s >= to) break;
+  }
+}
+
+/** The outline arrival effect: the border lights up in the dot's color from
+ *  the hit point, spreading both ways with a soft glow, then fades. With a
+ *  handoff, it spreads for the first half, then the lit segment slides
+ *  around the border toward the departure point, shrinking and morphing to
+ *  the next flow's color. */
+function drawOutlineEffect(
+  ctx: CanvasRenderingContext2D,
+  fx: import('./particles').ArrivalEffect,
+  node: NodeRect,
+  t: number,
+) {
+  const perim = buildPerimeter(node, NODE_CORNER_RADIUS);
+  const s0 = nearestPerimeterParam(perim, fx.entry);
+
+  let center = s0;
+  let half: number;
+  let alpha: number;
+  let color = fx.color;
+
+  if (!fx.handoffPoint) {
+    // Spread to wrap the whole border by t≈0.6, then fade out.
+    const grow = Math.min(t / 0.6, 1);
+    half = (1 - (1 - grow) * (1 - grow)) * (perim.total / 2);
+    alpha = t < 0.15 ? 0.9 * (t / 0.15) : t < 0.5 ? 0.9 : 0.9 * (1 - (t - 0.5) / 0.5);
+  } else {
+    const s1 = nearestPerimeterParam(perim, fx.handoffPoint);
+    if (t < 0.5) {
+      // Spread phase: light up half the border around the hit point.
+      const grow = 1 - (1 - t / 0.5) * (1 - t / 0.5);
+      half = grow * (perim.total / 4);
+      alpha = t < 0.15 ? 0.9 * (t / 0.15) : 0.9;
+    } else {
+      // Glide phase: slide toward the exit along the shorter way around,
+      // shrinking to a spark and morphing into the next flow's color.
+      const s = (t - 0.5) / 0.5;
+      const ease = s * s * (3 - 2 * s);
+      let d = ((s1 - s0) % perim.total + perim.total) % perim.total;
+      if (d > perim.total / 2) d -= perim.total;
+      center = s0 + d * ease;
+      half = (perim.total / 4) * (1 - ease) + 4 * ease;
+      alpha = 0.9;
+      if (fx.handoffColor && fx.handoffColor !== fx.color) {
+        color = mixColors(fx.color, fx.handoffColor, ease);
+      }
+    }
+  }
+  if (alpha <= 0 || half <= 0) return;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  // Three concentric strokes: wide soft halo → tight core. The halo bleeds
+  // slightly outside the node — the requested outer glow.
+  const layers: Array<[number, number]> = [
+    [7, alpha * 0.18],
+    [3.5, alpha * 0.4],
+    [1.8, alpha],
+  ];
+  for (const [width, a] of layers) {
+    pathAlongPerimeter(ctx, perim, center - half, center + half);
+    ctx.strokeStyle = hexA(color, a);
+    ctx.lineWidth = width;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Render the ink-drop absorption effects: a colored plume diffuses into the
  *  node from the particle's entry point, expands along its travel direction,
  *  then fades to nothing. When the effect carries a handoff point (a next
@@ -158,6 +321,12 @@ export function drawArrivalEffects(
     if (eff && eff.suppressed) continue;
 
     const t = Math.max(0, Math.min(1, fx.ageMs / fx.durationMs));
+
+    if (fx.kind === 'outline') {
+      drawOutlineEffect(ctx, fx, node, t);
+      continue;
+    }
+
     const minDim = Math.min(node.width, node.height);
     const drift = minDim * 0.35;
     const maxR = minDim * 0.75;

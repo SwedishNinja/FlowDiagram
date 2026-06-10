@@ -46,12 +46,17 @@ const flowdiagramParser: StreamParser<{ inFlow: boolean }> = {
 
     // Flow property keywords
     if (state.inFlow) {
-      if (stream.match('data:') || stream.match('freq:') || stream.match('every:') || stream.match('traverse_time:') || stream.match('speed:') || stream.match('start_delay:') || stream.match('direction:') || stream.match('color:') || stream.match('after:')) {
+      if (stream.match('data:') || stream.match('freq:') || stream.match('every:') || stream.match('traverse_time:') || stream.match('speed:') || stream.match('start_delay:') || stream.match('direction:') || stream.match('color:') || stream.match('after:') || stream.match('effect:')) {
         return 'propertyName';
       }
       if (stream.match('on')) {
         return 'keyword';
       }
+    }
+
+    // Diagram-wide setting lines
+    if (stream.match('arrival_effect:')) {
+      return 'propertyName';
     }
 
     // "as" keyword

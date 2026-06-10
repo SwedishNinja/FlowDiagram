@@ -23,6 +23,7 @@ import {
   updateStage,
 } from '../parser/textMutations';
 import type {
+  ArrivalEffectKind,
   ComponentNode,
   ConnectionNode,
   FlowDocument,
@@ -624,6 +625,18 @@ function FlowForm({ flow }: { flow: FlowNode }) {
           value={flow.direction}
           onChange={(v) => commit({ direction: v as 'forward' | 'reverse' })}
         />
+      </Field>
+      <Field label="Arrival effect">
+        <select
+          value={flow.arrivalEffect ?? ''}
+          onChange={(e) => commit({ arrivalEffect: e.target.value === '' ? null : (e.target.value as ArrivalEffectKind) })}
+          style={selectStyle}
+        >
+          <option value="">(diagram default)</option>
+          <option value="dissolve">Dissolve</option>
+          <option value="outline">Outline glow</option>
+          <option value="none">None</option>
+        </select>
       </Field>
       <Field label="Pace">
         <Segmented

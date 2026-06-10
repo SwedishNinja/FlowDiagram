@@ -4,7 +4,7 @@
  * everywhere except the slices being touched.
  */
 
-import type { FlowDocument, SourceLoc } from '../types';
+import type { FlowDocument, SourceLoc, ArrivalEffectKind } from '../types';
 import { updatePositionsInSource } from './updatePositions';
 
 interface Edit {
@@ -795,6 +795,7 @@ export function createFlow(
     direction?: 'forward' | 'reverse';
     startDelayMs?: number;
     after?: string[];
+    arrivalEffect?: ArrivalEffectKind;
     /** Target stage name, or null/undefined for root-level. */
     stage?: string | null;
   },
@@ -818,6 +819,8 @@ function buildFlowLines(opts: {
   direction?: 'forward' | 'reverse';
   startDelayMs?: number;
   after?: string[];
+  /** Per-flow arrival effect override; omit for the diagram default. */
+  arrivalEffect?: ArrivalEffectKind;
 }): string[] {
   const intervalMs = opts.intervalMs ?? 1000;
   const hasRate = opts.hasRate ?? true;
@@ -837,6 +840,7 @@ function buildFlowLines(opts: {
   if (direction === 'reverse') lines.push(`  direction: reverse`);
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
   if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
+  if (opts.arrivalEffect) lines.push(`  effect: ${opts.arrivalEffect}`);
   return lines;
 }
 
@@ -1409,6 +1413,8 @@ export function updateFlow(
     hasRate?: boolean;
     startDelayMs?: number;
     after?: string[];
+    /** Per-flow arrival effect; null clears the override (diagram default). */
+    arrivalEffect?: ArrivalEffectKind | null;
   },
 ): string {
   const flow = doc.flows.find((f) => f.name === name);
@@ -1430,6 +1436,7 @@ export function updateFlow(
   const hasRate = updates.hasRate ?? !!flow.hasRate;
   const startDelayMs = updates.startDelayMs ?? flow.startDelayMs;
   const after = updates.after ?? flow.after;
+  const arrivalEffect = 'arrivalEffect' in updates ? updates.arrivalEffect : flow.arrivalEffect;
 
   // Capture indentation: text[loc.start..] begins with optional whitespace
   // that the grammar's leading `_` consumed. Re-prepend it on every line so
@@ -1449,6 +1456,7 @@ export function updateFlow(
   if (direction === 'reverse') body.push(`  direction: reverse`);
   if (color) body.push(`  color: #${color.replace(/^#/, '')}`);
   if (after.length > 0) body.push(`  after: ${after.join(', ')}`);
+  if (arrivalEffect) body.push(`  effect: ${arrivalEffect}`);
 
   const block = body.map((l) => indent + l).join('\n') + '\n';
 

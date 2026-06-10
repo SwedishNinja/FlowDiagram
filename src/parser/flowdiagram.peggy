@@ -11,6 +11,7 @@ Body
     const groups = [];
     const stages = [];
     const positions = {};
+    const settings = {};
     // Deferred references: each entry is { parentId, refId }. Resolved
     // after all declarations so forward references work.
     const referenceRequests = [];
@@ -79,6 +80,9 @@ Body
           if (p) positions[p.id] = { x: p.x, y: p.y };
         }
       }
+      else if (entry.type === 'setting') {
+        settings[entry.key] = entry.value;
+      }
     }
 
     for (const entry of entries) ingest(entry);
@@ -103,7 +107,7 @@ Body
       // rearranges via parentGroup pointers only.
     }
 
-    return { components, connections, flows, groups, stages, positions };
+    return { components, connections, flows, groups, stages, positions, settings };
   }
 
 // Entry handles newlines: single-line statements consume one NL,
@@ -114,8 +118,23 @@ Entry
   / stage:StageBlock { return stage; }
   / pb:PositionsBlock { return pb; }
   / fb:FlowBlock { return fb; }
+  / setting:DiagramSetting { return setting; }
   / _ stmt:(Component / Connection / Comment) _ NL { return stmt; }
   / _ NL { return null; }
+
+// --- Diagram-wide settings ---
+// Top-level property lines that set defaults for the whole diagram.
+// arrival_effect: dissolve | outline | none — default arrival effect for
+// every flow (each flow may override with its own `effect:`).
+
+DiagramSetting
+  = _ "arrival_effect:" _ value:EffectKind _ NL
+  { return { type: 'setting', key: 'arrivalEffect', value }; }
+
+EffectKind
+  = "dissolve" { return 'dissolve'; }
+  / "outline"  { return 'outline'; }
+  / "none"     { return 'none'; }
 
 // --- Stage ---
 // Groups flows into a stage. Stage lifecycle: idle → running → completed.
@@ -317,6 +336,7 @@ FlowBlock
       else if (prop.key === 'direction') result.direction = prop.value;
       else if (prop.key === 'color') result.color = prop.value;
       else if (prop.key === 'after') result.after = prop.value;
+      else if (prop.key === 'effect') result.arrivalEffect = prop.value;
     }
     // Constant speed is the default model: unless the author wrote an
     // explicit traverse_time:, dots move at a uniform px/s pace.
@@ -344,6 +364,8 @@ FlowProperty
   { return { key: 'color', value }; }
   / _ "after:" _ value:AfterList _ NL
   { return { key: 'after', value }; }
+  / _ "effect:" _ value:EffectKind _ NL
+  { return { key: 'effect', value }; }
   / _ Comment NL
   { return null; }
 

@@ -22,7 +22,7 @@ import {
   updateGroup,
   updateStage,
 } from '../parser/textMutations';
-import type { ComponentNode, ConnectionNode, FlowNode, FlowDocument, GroupNode, StageNode } from '../types';
+import type { ArrivalEffectKind, ComponentNode, ConnectionNode, FlowNode, FlowDocument, GroupNode, StageNode } from '../types';
 
 // Stable empty arrays for Zustand selectors. A fresh `?? []` inside a
 // useFlowStore selector loops React 19's useSyncExternalStore equality check.
@@ -607,6 +607,18 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
           value={flow.direction}
           onChange={(v) => commit({ direction: v as 'forward' | 'reverse' })}
         />
+      </FieldRow>
+      <FieldRow label="Arrival effect">
+        <select
+          value={flow.arrivalEffect ?? ''}
+          onChange={(e) => commit({ arrivalEffect: e.target.value === '' ? null : (e.target.value as ArrivalEffectKind) })}
+          style={{ ...textInputStyle, padding: '5px 6px' }}
+        >
+          <option value="">(diagram default)</option>
+          <option value="dissolve">Dissolve</option>
+          <option value="outline">Outline glow</option>
+          <option value="none">None</option>
+        </select>
       </FieldRow>
       <FieldRow label="Pace">
         <SegmentedControl

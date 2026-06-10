@@ -5,6 +5,11 @@ export interface SourceLoc {
   end: number;
 }
 
+/** What plays when a dot reaches its node. `dissolve` = ink-drop absorption,
+ *  `outline` = the node border lights up from the hit point with a glow,
+ *  `none` = no effect (and no arrival delay). */
+export type ArrivalEffectKind = 'dissolve' | 'outline' | 'none';
+
 /** A parsed flow diagram document */
 export interface FlowDocument {
   components: ComponentNode[];
@@ -14,6 +19,12 @@ export interface FlowDocument {
   stages: StageNode[];
   /** Component position overrides by alias (from @positions block) */
   positions: Record<string, { x: number; y: number }>;
+  /** Diagram-wide defaults (top-level property lines). Optional so docs
+   *  built by hand in tests stay valid. */
+  settings?: {
+    /** Default arrival effect for all flows (overridable per flow). */
+    arrivalEffect?: ArrivalEffectKind;
+  };
 }
 
 /** A component (box) in the diagram */
@@ -72,6 +83,8 @@ export interface FlowNode {
   stage?: string;
   /** True if the flow was declared with freq:/every: (repeats while its stage is running). */
   hasRate?: boolean;
+  /** Per-flow arrival effect override; unset → diagram default. */
+  arrivalEffect?: ArrivalEffectKind;
   loc?: SourceLoc;                    // byte offsets of the @flow block (header + properties)
 }
 

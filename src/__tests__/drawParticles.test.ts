@@ -7,8 +7,13 @@ import { drawArrivalEffects } from '../renderer/drawParticles';
 function stubContext() {
   const calls: string[] = [];
   const colorStops: string[] = [];
+  const strokeStyles: string[] = [];
   const ctx = {
     fillStyle: undefined as unknown,
+    strokeStyle: undefined as unknown,
+    lineWidth: 0,
+    lineCap: '',
+    lineJoin: '',
     save: () => calls.push('save'),
     restore: () => calls.push('restore'),
     beginPath: () => calls.push('beginPath'),
@@ -19,17 +24,27 @@ function stubContext() {
     clip: () => calls.push('clip'),
     arc: () => calls.push('arc'),
     fill: () => calls.push('fill'),
+    stroke() {
+      calls.push('stroke');
+      strokeStyles.push(String(this.strokeStyle));
+    },
     createRadialGradient: () => {
       calls.push('gradient');
       return { addColorStop: (_: number, color: string) => colorStops.push(color) };
     },
   };
-  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, colorStops };
+  return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, colorStops, strokeStyles };
 }
 
-function systemWithEffect(ageMs: number, handoffPoint?: { x: number; y: number }, handoffColor?: string) {
+function systemWithEffect(
+  ageMs: number,
+  handoffPoint?: { x: number; y: number },
+  handoffColor?: string,
+  kind: 'dissolve' | 'outline' = 'dissolve',
+) {
   const ps = new ParticleSystem();
   ps.effects.push({
+    kind,
     nodeId: 'b',
     edgeId: 'c1',
     entry: { x: 100, y: 50 },
@@ -109,6 +124,36 @@ describe('drawArrivalEffects', () => {
     for (const stop of mid.colorStops) {
       expect(stop.startsWith('#3b82f6')).toBe(false);
       expect(stop.startsWith('#ef4444')).toBe(false);
+    }
+  });
+
+  it('outline effect strokes three glow layers along the border', () => {
+    const { ctx, calls, strokeStyles } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(500, undefined, undefined, 'outline'), nodeLookup, edgeLookup);
+
+    expect(calls.filter(c => c === 'stroke')).toHaveLength(3);
+    expect(calls.filter(c => c === 'gradient')).toHaveLength(0); // no plume
+    expect(calls.filter(c => c === 'clip')).toHaveLength(0);     // glow may exceed the box
+    for (const style of strokeStyles) {
+      expect(style).toMatch(/^#3b82f6[0-9a-f]{2}$/);
+    }
+  });
+
+  it('outline effect fades out at the end of a terminal arrival', () => {
+    const { ctx, calls } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(1000, undefined, undefined, 'outline'), nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'stroke')).toHaveLength(0);
+  });
+
+  it('outline handoff morphs the stroke color toward the next flow', () => {
+    const { strokeStyles } = (() => {
+      const s = stubContext();
+      drawArrivalEffects(s.ctx, systemWithEffect(999, { x: 220, y: 50 }, '#ef4444', 'outline'), nodeLookup, edgeLookup);
+      return s;
+    })();
+    expect(strokeStyles.length).toBeGreaterThan(0);
+    for (const style of strokeStyles) {
+      expect(style.startsWith('#ef4444')).toBe(true);
     }
   });
 

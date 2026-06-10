@@ -230,6 +230,58 @@ a -> b as c1
     stepFor(ps, 400);
     expect(ps.effects[0]!.handoffPoint).toBeUndefined();
   });
+
+  it('defaults to the dissolve kind', async () => {
+    const { ps } = await setup(SCENE, { absorbMs: 1000 });
+    stepFor(ps, 400);
+    expect(ps.effects[0]!.kind).toBe('dissolve');
+  });
+
+  it('diagram-level arrival_effect sets the default; per-flow effect overrides', async () => {
+    const src = `@startuml
+arrival_effect: outline
+
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+a -> c as c2
+
+@flow uses_default on c1
+  traverse_time: 100ms
+@flow overridden on c2
+  traverse_time: 100ms
+  effect: dissolve
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    expect(ps.effects.find(f => f.flowName === 'uses_default')!.kind).toBe('outline');
+    expect(ps.effects.find(f => f.flowName === 'overridden')!.kind).toBe('dissolve');
+  });
+
+  it('effect: none skips the effect AND the arrival delay', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage login
+  @flow login_flow on c1
+    traverse_time: 100ms
+    effect: none
+@end_stage
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+
+    // Arrival at ~120ms registers immediately — no effect, stage completes
+    // well before the 1s absorb window would have elapsed.
+    stepFor(ps, 400);
+    expect(ps.effects).toHaveLength(0);
+    expect(ps.getStageSnapshot()[0]!.completionCount).toBe(1);
+  });
 });
 
 describe('handoff re-condensation', () => {

@@ -38,6 +38,7 @@ interface RawParseResult {
   groups: GroupNode[];
   stages?: StageNode[];
   positions: Record<string, { x: number; y: number }>;
+  settings?: FlowDocument['settings'];
 }
 
 /** Auto-generate connection IDs for unnamed connections */
@@ -165,6 +166,7 @@ export function parse(input: string): ParseResult {
       groups: raw.groups ?? [],
       stages: raw.stages ?? [],
       positions: raw.positions ?? {},
+      settings: raw.settings ?? {},
     };
     const validationError = validate(document);
     if (validationError) {

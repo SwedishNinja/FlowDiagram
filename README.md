@@ -165,6 +165,17 @@ auth -> gw as result_conn : auth result
   color: #FF0088             # hex color (also: named like "red", "blue", or "#abc")
   after: flow_a, flow_b      # dependencies — if present, this flow fires ONCE per
                              # upstream arrival (1:1, not continuously)
+  effect: outline            # arrival effect override: dissolve | outline | none
+                             # (omit to use the diagram default)
+```
+
+### Diagram-wide settings
+
+Top-level property lines that set defaults for the whole diagram:
+
+```
+arrival_effect: outline      # default arrival effect for every flow:
+                             # dissolve (default) | outline | none
 ```
 
 ### Semantics
@@ -177,7 +188,9 @@ auth -> gw as result_conn : auth result
 
 **Arrival absorption**: when a dot reaches its box it dissolves into it — a colored plume diffuses in from the entry direction and fades out over ~1 s, like a drop of dye in water. The arrival only *counts* (for `after:` dependencies and stage completion) once the plume has fully dissolved, so downstream flows and the next stage wait for the effect to finish.
 
-**Handoff re-condensation**: when the journey *continues* from that box — a flow with `after:` listing the arriving flow departs from the same node, or the next stage in an `after:` chain has a start flow leaving it — the plume doesn't fade away. It dissolves about halfway, then glides across the box and re-condenses at the point where the outgoing line departs, landing there exactly as the next flow's dot spawns: dot → dissolve → re-assemble → next dot, one continuous substance. A terminal arrival (nothing continues from that node) still fully dissolves.
+**Handoff re-condensation**: when the journey *continues* from that box — a flow with `after:` listing the arriving flow departs from the same node, or the next stage in an `after:` chain has a start flow leaving it — the plume doesn't fade away. It dissolves about halfway, then glides across the box and re-condenses at the point where the outgoing line departs, landing there exactly as the next flow's dot spawns: dot → dissolve → re-assemble → next dot, one continuous substance. If the continuing flow has a different color, the plume morphs into it mid-glide. A terminal arrival (nothing continues from that node) still fully dissolves.
+
+**Outline effect** (`effect: outline`): instead of the ink drop, the node's border lights up in the dot's color from the hit point, spreading around the outline both ways with a soft outer glow, then fading. With a handoff it spreads for the first half, then the lit segment slides around the border toward the departure point, shrinking to a spark and morphing into the next flow's color as the next dot spawns. `effect: none` disables the arrival effect for a flow entirely (and skips the ~1 s arrival delay).
 
 ### @stage blocks (scenario grouping)
 

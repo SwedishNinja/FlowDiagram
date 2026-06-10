@@ -1,4 +1,4 @@
-import type { FlowDocument, LayoutResult, LayoutEdge, FlowNode, Point } from '../types';
+import type { FlowDocument, LayoutResult, LayoutEdge, FlowNode, Point, ArrivalEffectKind } from '../types';
 import { pointAtProgress, polylineLength } from './pathUtils';
 import { normalizeColor } from './colorUtils';
 
@@ -19,6 +19,8 @@ export interface Particle {
  *  While an effect is alive its arrival has NOT yet been registered — stage
  *  completion and `after:` deps wait until the drop fully dissolves. */
 export interface ArrivalEffect {
+  /** Which animation plays: ink-drop dissolve or border-glow outline. */
+  kind: 'dissolve' | 'outline';
   nodeId: string;
   edgeId: string;
   /** Diagram-space point where the particle entered the box. */
@@ -100,6 +102,9 @@ export class ParticleSystem {
   /** Edge geometry by connection id, captured at init for entry points. */
   private edgeById = new Map<string, LayoutEdge>();
 
+  /** Diagram-wide default arrival effect (top-level `arrival_effect:`). */
+  private defaultArrivalEffect: ArrivalEffectKind = 'dissolve';
+
   /** Per-flow id of the particle currently carrying the data label. The
    *  renderer reads this and only repicks (latest spawn) when the prior
    *  holder is no longer alive. Public so drawParticles can mutate it. */
@@ -126,6 +131,7 @@ export class ParticleSystem {
 
     const edgeMap = new Map(layout.edges.map(e => [e.id, e]));
     this.edgeById = edgeMap;
+    this.defaultArrivalEffect = doc.settings?.arrivalEffect ?? 'dissolve';
 
     // Build stage states. A stage with no deps starts running immediately;
     // stages with deps start idle and wait for dep completions.
@@ -285,8 +291,20 @@ export class ParticleSystem {
     return null;
   }
 
-  /** Build the absorption effect for a particle that just reached its node. */
+  /** Effect kind for a flow: per-flow override, else the diagram default. */
+  private effectKindFor(flowName: string): ArrivalEffectKind {
+    const emitter = this.emitters.find(e => e.flow.name === flowName);
+    return emitter?.flow.arrivalEffect ?? this.defaultArrivalEffect;
+  }
+
+  /** Build the arrival effect for a particle that just reached its node. */
   private spawnArrivalEffect(p: Particle) {
+    const kind = this.effectKindFor(p.flowName);
+    if (kind === 'none') {
+      // No effect → no delay either; the arrival counts immediately.
+      this.registerArrival(p.flowName);
+      return;
+    }
     const edge = this.edgeById.get(p.edgeId);
     if (!edge || edge.points.length < 2) {
       this.registerArrival(p.flowName);
@@ -309,6 +327,7 @@ export class ParticleSystem {
     const nodeId = p.reverse ? edge.source : edge.target;
     const handoff = this.findHandoff(p.flowName, nodeId);
     this.effects.push({
+      kind,
       nodeId,
       edgeId: p.edgeId,
       entry: { ...entry },
