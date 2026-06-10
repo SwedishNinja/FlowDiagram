@@ -27,7 +27,7 @@ function stubContext() {
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, colorStops };
 }
 
-function systemWithEffect(ageMs: number) {
+function systemWithEffect(ageMs: number, handoffPoint?: { x: number; y: number }) {
   const ps = new ParticleSystem();
   ps.effects.push({
     nodeId: 'b',
@@ -38,6 +38,7 @@ function systemWithEffect(ageMs: number) {
     flowName: 'f',
     ageMs,
     durationMs: 1000,
+    handoffPoint,
   });
   return ps;
 }
@@ -71,5 +72,24 @@ describe('drawArrivalEffects', () => {
     const { ctx, calls } = stubContext();
     drawArrivalEffects(ctx, systemWithEffect(500), () => undefined, edgeLookup);
     expect(calls).toHaveLength(0);
+  });
+
+  it('handoff gather phase still renders clipped blobs with valid stops', () => {
+    const { ctx, calls, colorStops } = stubContext();
+    // age 900/1000 → deep in the re-condensation glide toward the exit.
+    drawArrivalEffects(ctx, systemWithEffect(900, { x: 220, y: 50 }), nodeLookup, edgeLookup);
+
+    expect(calls.filter(c => c === 'clip')).toHaveLength(1);
+    expect(calls.filter(c => c === 'gradient')).toHaveLength(3);
+    for (const stop of colorStops) {
+      expect(stop).toMatch(/^#3b82f6[0-9a-f]{2}$/);
+    }
+  });
+
+  it('handoff effect stays visible at the half-dissolved midpoint', () => {
+    const { ctx, calls } = stubContext();
+    // Exactly between dissolve and gather — the dye must NOT have faded out.
+    drawArrivalEffects(ctx, systemWithEffect(500, { x: 220, y: 50 }), nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'fill').length).toBeGreaterThan(0);
   });
 });

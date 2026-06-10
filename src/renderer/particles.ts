@@ -29,6 +29,11 @@ export interface ArrivalEffect {
   flowName: string;
   ageMs: number;
   durationMs: number;
+  /** When the arrival hands off to a continuing flow leaving this node, the
+   *  diagram-space point where that flow's line departs. The plume then only
+   *  half-dissolves and re-condenses here instead of fading out, so it
+   *  visually becomes the next flow's dot. */
+  handoffPoint?: Point;
 }
 
 // Distinct colors for different flows
@@ -232,6 +237,49 @@ export class ParticleSystem {
     }
   }
 
+  /** Departure point of an emitter's edge at `nodeId`, or null if the
+   *  emitter doesn't start its journey from that node. */
+  private departurePointAt(emitter: FlowEmitter, nodeId: string): Point | null {
+    const isReverse = emitter.flow.direction === 'reverse';
+    const startNode = isReverse ? emitter.edge.target : emitter.edge.source;
+    if (startNode !== nodeId) return null;
+    const pts = emitter.edge.points;
+    if (pts.length < 2) return null;
+    const start = isReverse ? pts[pts.length - 1]! : pts[0]!;
+    return { ...start };
+  }
+
+  /** Where (if anywhere) the journey continues after `flowName` arrives at
+   *  `nodeId`: the departure point of a flow-level dependent (`after:` lists
+   *  this flow), or of a next-stage starting flow when this flow's stage
+   *  chains into another. Null → nothing continues, full dissolve. */
+  private findHandoffPoint(flowName: string, nodeId: string): Point | null {
+    // 1. Direct dependents — relays inside or outside stages.
+    for (const e of this.emitters) {
+      if (!e.flow.after.includes(flowName)) continue;
+      const pt = this.departurePointAt(e, nodeId);
+      if (pt) return pt;
+    }
+
+    // 2. Stage chaining: flows that fire when a stage depending on this
+    //    flow's stage starts running.
+    const emitter = this.emitters.find(e => e.flow.name === flowName);
+    const stageName = emitter?.flow.stage;
+    if (stageName) {
+      for (const next of this.stageStates.values()) {
+        if (!next.after.includes(stageName)) continue;
+        for (const e of this.emitters) {
+          // Only the stage's own start flows fire on stage start; flows
+          // with deps wait for arrivals and are covered by case 1.
+          if (e.flow.stage !== next.name || e.flow.after.length > 0) continue;
+          const pt = this.departurePointAt(e, nodeId);
+          if (pt) return pt;
+        }
+      }
+    }
+    return null;
+  }
+
   /** Build the absorption effect for a particle that just reached its node. */
   private spawnArrivalEffect(p: Particle) {
     const edge = this.edgeById.get(p.edgeId);
@@ -253,8 +301,9 @@ export class ParticleSystem {
       this.registerArrival(p.flowName);
       return;
     }
+    const nodeId = p.reverse ? edge.source : edge.target;
     this.effects.push({
-      nodeId: p.reverse ? edge.source : edge.target,
+      nodeId,
       edgeId: p.edgeId,
       entry: { ...entry },
       dir: { x: dx, y: dy },
@@ -262,6 +311,7 @@ export class ParticleSystem {
       flowName: p.flowName,
       ageMs: 0,
       durationMs: this.arrivalEffectMs,
+      handoffPoint: this.findHandoffPoint(p.flowName, nodeId) ?? undefined,
     });
   }
 

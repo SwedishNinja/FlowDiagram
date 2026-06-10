@@ -137,8 +137,12 @@ function roundedRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w:
 
 /** Render the ink-drop absorption effects: a colored plume diffuses into the
  *  node from the particle's entry point, expands along its travel direction,
- *  then fades to nothing. Clipped to the node's rounded rect so the color
- *  stays "inside the water". Shared by the live canvas and both exporters. */
+ *  then fades to nothing. When the effect carries a handoff point (a next
+ *  flow departs from this node), the plume only HALF-dissolves, then
+ *  re-condenses toward that departure point — landing there exactly as the
+ *  next flow's dot spawns, so the dye visually becomes the next dot.
+ *  Clipped to the node's rounded rect so the color stays "inside the water".
+ *  Shared by the live canvas and both exporters. */
 export function drawArrivalEffects(
   ctx: CanvasRenderingContext2D,
   particleSystem: ParticleSystem,
@@ -153,17 +157,54 @@ export function drawArrivalEffects(
     if (eff && eff.suppressed) continue;
 
     const t = Math.max(0, Math.min(1, fx.ageMs / fx.durationMs));
-    const grow = 1 - (1 - t) * (1 - t); // ease-out expansion
-    // Opacity: quick rise while the drop "lands", long dissolve to zero.
-    const alpha = t < 0.2 ? 0.55 * (t / 0.2) : 0.55 * (1 - (t - 0.2) / 0.8);
-    if (alpha <= 0) continue;
-
     const minDim = Math.min(node.width, node.height);
     const drift = minDim * 0.35;
     const maxR = minDim * 0.75;
-    const cx = fx.entry.x + fx.dir.x * drift * grow;
-    const cy = fx.entry.y + fx.dir.y * drift * grow;
-    const r = Math.max(4 + grow * maxR, 1);
+
+    let cx: number;
+    let cy: number;
+    let r: number;
+    let alpha: number;
+    let wispScale = 1; // wisps shrink away as the plume re-condenses
+
+    if (!fx.handoffPoint) {
+      // Full dissolve: expand along the travel direction and fade to zero.
+      const grow = 1 - (1 - t) * (1 - t); // ease-out expansion
+      // Opacity: quick rise while the drop "lands", long dissolve to zero.
+      alpha = t < 0.2 ? 0.55 * (t / 0.2) : 0.55 * (1 - (t - 0.2) / 0.8);
+      cx = fx.entry.x + fx.dir.x * drift * grow;
+      cy = fx.entry.y + fx.dir.y * drift * grow;
+      r = Math.max(4 + grow * maxR, 1);
+    } else {
+      // Handoff: dissolve to ~half, then gather toward the departure point.
+      // State at dissolve-progress u (0..1) — shared by both phases so the
+      // gather starts exactly where the dissolve stopped.
+      const dissolveAt = (u: number) => {
+        const g = 1 - (1 - u) * (1 - u);
+        return {
+          x: fx.entry.x + fx.dir.x * drift * 0.8 * g,
+          y: fx.entry.y + fx.dir.y * drift * 0.8 * g,
+          r: Math.max(4 + g * maxR * 0.55, 1),
+          // Rise fast, then thin out — but never below ~0.35: the dye
+          // stays visible through the whole handoff.
+          a: u < 0.3 ? 0.6 * (u / 0.3) : 0.6 - 0.25 * ((u - 0.3) / 0.7),
+        };
+      };
+      if (t < 0.5) {
+        const d = dissolveAt(t / 0.5);
+        cx = d.x; cy = d.y; r = d.r; alpha = d.a;
+      } else {
+        const s = (t - 0.5) / 0.5;
+        const ease = s * s * (3 - 2 * s); // smoothstep glide
+        const from = dissolveAt(1);
+        cx = from.x + (fx.handoffPoint.x - from.x) * ease;
+        cy = from.y + (fx.handoffPoint.y - from.y) * ease;
+        r = from.r + (5 - from.r) * ease;
+        alpha = from.a + (0.9 - from.a) * ease;
+        wispScale = 1 - ease;
+      }
+    }
+    if (alpha <= 0) continue;
 
     // Perpendicular to the travel direction, for the side wisps.
     const px = -fx.dir.y;
@@ -177,8 +218,8 @@ export function drawArrivalEffects(
     // give the "drop of dye in water" irregularity.
     const blobs: Array<[number, number, number, number]> = [
       [cx, cy, r, alpha],
-      [cx + px * r * 0.45 + fx.dir.x * r * 0.15, cy + py * r * 0.45 + fx.dir.y * r * 0.15, r * 0.62, alpha * 0.6],
-      [cx - px * r * 0.38 + fx.dir.x * r * 0.3, cy - py * r * 0.38 + fx.dir.y * r * 0.3, r * 0.5, alpha * 0.55],
+      [cx + (px * r * 0.45 + fx.dir.x * r * 0.15) * wispScale, cy + (py * r * 0.45 + fx.dir.y * r * 0.15) * wispScale, r * 0.62, alpha * 0.6 * wispScale],
+      [cx - (px * r * 0.38 - fx.dir.x * r * 0.3) * wispScale, cy - (py * r * 0.38 - fx.dir.y * r * 0.3) * wispScale, r * 0.5, alpha * 0.55 * wispScale],
     ];
     for (const [bx, by, br, ba] of blobs) {
       const grad = ctx.createRadialGradient(bx, by, 0, bx, by, br);

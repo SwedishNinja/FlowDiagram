@@ -224,6 +224,119 @@ a -> b as c1
     // dir is a unit vector
     expect(Math.hypot(fx.dir.x, fx.dir.y)).toBeCloseTo(1, 5);
   });
+
+  it('terminal arrival has no handoff point (full dissolve)', async () => {
+    const { ps } = await setup(SCENE, { absorbMs: 1000 });
+    stepFor(ps, 400);
+    expect(ps.effects[0]!.handoffPoint).toBeUndefined();
+  });
+});
+
+describe('handoff re-condensation', () => {
+  it('a flow-level dependent leaving the same node sets the handoff point', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+b -> c as c2
+
+@flow first on c1
+  traverse_time: 100ms
+@flow second on c2
+  after: first
+@enduml
+`;
+    const { ps, layout } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects.find(f => f.flowName === 'first')!;
+    expect(fx).toBeDefined();
+    // The plume should re-condense at the start of c2's polyline (where the
+    // next flow departs node b).
+    const next = layout.edges.find(e => e.id === 'c2')!;
+    expect(fx.handoffPoint).toEqual(next.points[0]);
+  });
+
+  it('no handoff when the dependent flow departs from a different node', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+a -> c as c3
+
+@flow first on c1
+  traverse_time: 100ms
+@flow elsewhere on c3
+  after: first
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects.find(f => f.flowName === 'first')!;
+    expect(fx.handoffPoint).toBeUndefined();
+  });
+
+  it('stage chaining: next stage start flow from the same node sets the handoff point', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+b -> c as c2
+
+@stage one
+  @flow first on c1
+    traverse_time: 100ms
+@end_stage
+
+@stage two
+  after: one
+  @flow continue on c2
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const { ps, layout } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects.find(f => f.flowName === 'first')!;
+    const next = layout.edges.find(e => e.id === 'c2')!;
+    expect(fx.handoffPoint).toEqual(next.points[0]);
+
+    // And the handoff is seamless: once the effect finishes (~1.1s after
+    // arrival), the next stage's flow spawns its dot on c2. Sample at
+    // ~1.15s total — after the spawn but before that dot itself arrives.
+    stepFor(ps, 750);
+    const dot = ps.particles.find(p => p.flowName === 'continue');
+    expect(dot).toBeDefined();
+    expect(dot!.edgeId).toBe('c2');
+  });
+
+  it('reverse dependent: handoff lands at the END of the next edge polyline', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+a -> b as c2
+
+@flow first on c1
+  traverse_time: 100ms
+@flow back on c2
+  direction: reverse
+  after: first
+@enduml
+`;
+    const { ps, layout } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects.find(f => f.flowName === 'first')!;
+    // Reverse flows start at the target end → last polyline point of c2.
+    const next = layout.edges.find(e => e.id === 'c2')!;
+    expect(fx.handoffPoint).toEqual(next.points[next.points.length - 1]);
+  });
 });
 
 describe('constant px/s speed', () => {

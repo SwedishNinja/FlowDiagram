@@ -177,6 +177,8 @@ auth -> gw as result_conn : auth result
 
 **Arrival absorption**: when a dot reaches its box it dissolves into it — a colored plume diffuses in from the entry direction and fades out over ~1 s, like a drop of dye in water. The arrival only *counts* (for `after:` dependencies and stage completion) once the plume has fully dissolved, so downstream flows and the next stage wait for the effect to finish.
 
+**Handoff re-condensation**: when the journey *continues* from that box — a flow with `after:` listing the arriving flow departs from the same node, or the next stage in an `after:` chain has a start flow leaving it — the plume doesn't fade away. It dissolves about halfway, then glides across the box and re-condenses at the point where the outgoing line departs, landing there exactly as the next flow's dot spawns: dot → dissolve → re-assemble → next dot, one continuous substance. A terminal arrival (nothing continues from that node) still fully dissolves.
+
 ### @stage blocks (scenario grouping)
 
 Group flows into lifecycle stages. Useful when your scenario has phases — a login exchange completes, then a data sync begins, then the UI updates.
