@@ -608,13 +608,38 @@ function FlowInspector({ flow }: { flow: FlowNode }) {
           onChange={(v) => commit({ direction: v as 'forward' | 'reverse' })}
         />
       </FieldRow>
-      <FieldRow label="Traverse time (ms)">
-        <CommitNumberInput
-          initial={Math.round(flow.traverseTimeMs)}
-          min={50}
-          onCommit={(v) => commit({ traverseTimeMs: v })}
+      <FieldRow label="Pace">
+        <SegmentedControl
+          options={[
+            { value: 'speed', label: 'Speed (px/s)' },
+            { value: 'time', label: 'Fixed (ms)' },
+          ]}
+          value={flow.speedPxPerSec != null ? 'speed' : 'time'}
+          onChange={(v) => {
+            if (v === 'speed') commit({ speedPxPerSec: Math.round(flow.speedPxPerSec ?? 150) });
+            else commit({ speedPxPerSec: null, traverseTimeMs: Math.round(flow.traverseTimeMs) });
+          }}
         />
       </FieldRow>
+      {flow.speedPxPerSec != null ? (
+        <FieldRow label="Speed (px/s)">
+          <CommitNumberInput
+            key="speed"
+            initial={Math.round(flow.speedPxPerSec)}
+            min={10}
+            onCommit={(v) => commit({ speedPxPerSec: v })}
+          />
+        </FieldRow>
+      ) : (
+        <FieldRow label="Traverse time (ms)">
+          <CommitNumberInput
+            key="traverse"
+            initial={Math.round(flow.traverseTimeMs)}
+            min={50}
+            onCommit={(v) => commit({ traverseTimeMs: v })}
+          />
+        </FieldRow>
+      )}
       <FieldRow label="Continuous">
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <input

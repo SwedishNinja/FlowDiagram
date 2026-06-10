@@ -102,7 +102,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
   const [continuous, setContinuous] = useState(true);
   // Held as raw text so the user can type freely; coerced on Create.
   const [everyMs, setEveryMs] = useState('1000');
-  const [traverseMs, setTraverseMs] = useState('1500');
+  const [speedPx, setSpeedPx] = useState('150');
   const [direction, setDirection] = useState<'forward' | 'reverse'>(
     match?.reverseToMatchOrder ? 'reverse' : 'forward',
   );
@@ -156,7 +156,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
       color,
       hasRate: continuous,
       intervalMs: toMs(everyMs, 30, 1000),
-      traverseTimeMs: toMs(traverseMs, 50, 1500),
+      speedPxPerSec: toMs(speedPx, 10, 150),
       direction,
       stage: stage === '' ? null : stage,
     });
@@ -236,12 +236,12 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
           onChange={(v) => setDirection(v as 'forward' | 'reverse')}
         />
       </FieldRow>
-      <FieldRow label="Traverse time (ms)">
+      <FieldRow label="Speed (px/s)">
         <input
           type="number"
-          min={50}
-          value={traverseMs}
-          onChange={(e) => setTraverseMs(e.target.value)}
+          min={10}
+          value={speedPx}
+          onChange={(e) => setSpeedPx(e.target.value)}
           style={textInputStyle}
         />
       </FieldRow>
@@ -297,7 +297,7 @@ function RelayCreateCard({
   const [continuous, setContinuous] = useState(true);
   // Held as raw text so the user can type freely; coerced on Create.
   const [everyMs, setEveryMs] = useState('1000');
-  const [traverseMs, setTraverseMs] = useState('1500');
+  const [speedPx, setSpeedPx] = useState('150');
 
   // Route as display names: start node followed by each hop's destination.
   const nameOf = (id: string) => ast.components.find((c) => c.id === id)?.displayName ?? id;
@@ -314,7 +314,7 @@ function RelayCreateCard({
       data: data.trim() ? data.trim() : null,
       continuous,
       intervalMs: toMs(everyMs, 30, 1000),
-      traverseTimeMs: toMs(traverseMs, 50, 1500),
+      speedPxPerSec: toMs(speedPx, 10, 150),
     });
     if (updated !== sourceText) setSourceText(updated);
     if (flowNames[0]) setSelection(flowNames[0], 'flow');
@@ -348,12 +348,12 @@ function RelayCreateCard({
           style={textInputStyle}
         />
       </FieldRow>
-      <FieldRow label="Traverse time per hop (ms)">
+      <FieldRow label="Speed (px/s)">
         <input
           type="number"
-          min={50}
-          value={traverseMs}
-          onChange={(e) => setTraverseMs(e.target.value)}
+          min={10}
+          value={speedPx}
+          onChange={(e) => setSpeedPx(e.target.value)}
           style={textInputStyle}
         />
       </FieldRow>

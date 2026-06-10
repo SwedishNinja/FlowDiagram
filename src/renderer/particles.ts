@@ -1,5 +1,5 @@
 import type { FlowDocument, LayoutResult, LayoutEdge, FlowNode, Point } from '../types';
-import { pointAtProgress } from './pathUtils';
+import { pointAtProgress, polylineLength } from './pathUtils';
 import { normalizeColor } from './colorUtils';
 
 export interface Particle {
@@ -13,6 +13,22 @@ export interface Particle {
   color: string;
   dataLabel?: string;
   reverse: boolean;
+}
+
+/** An "ink drop" absorption playing inside a node after a particle hits it.
+ *  While an effect is alive its arrival has NOT yet been registered — stage
+ *  completion and `after:` deps wait until the drop fully dissolves. */
+export interface ArrivalEffect {
+  nodeId: string;
+  edgeId: string;
+  /** Diagram-space point where the particle entered the box. */
+  entry: Point;
+  /** Unit vector pointing INTO the box (direction of travel at arrival). */
+  dir: Point;
+  color: string;
+  flowName: string;
+  ageMs: number;
+  durationMs: number;
 }
 
 // Distinct colors for different flows
@@ -62,6 +78,19 @@ export class ParticleSystem {
   particles: Particle[] = [];
   emitters: FlowEmitter[] = [];
 
+  /** Live absorption effects. Public so the renderer can draw them. */
+  effects: ArrivalEffect[] = [];
+
+  /** How long the ink-drop absorption plays before the arrival registers.
+   *  Settable for tests / future user control. */
+  arrivalEffectMs = 1000;
+
+  /** Hard cap so a runaway high-frequency flow can't accumulate effects. */
+  private maxEffects = 300;
+
+  /** Edge geometry by connection id, captured at init for entry points. */
+  private edgeById = new Map<string, LayoutEdge>();
+
   /** Per-flow id of the particle currently carrying the data label. The
    *  renderer reads this and only repicks (latest spawn) when the prior
    *  holder is no longer alive. Public so drawParticles can mutate it. */
@@ -82,10 +111,12 @@ export class ParticleSystem {
   init(doc: FlowDocument, layout: LayoutResult) {
     this.particles = [];
     this.emitters = [];
+    this.effects = [];
     this.arrivalCounts.clear();
     this.stageStates.clear();
 
     const edgeMap = new Map(layout.edges.map(e => [e.id, e]));
+    this.edgeById = edgeMap;
 
     // Build stage states. A stage with no deps starts running immediately;
     // stages with deps start idle and wait for dep completions.
@@ -107,7 +138,13 @@ export class ParticleSystem {
       if (!edge) return;
 
       const spawnInterval = Math.max(flow.intervalMs, 30);
-      const travelTime = Math.max(flow.traverseTimeMs, 100);
+      // Constant-speed mode: travel time derives from the edge's actual
+      // length so dots pace identically everywhere. Explicit traverse_time
+      // keeps the legacy fixed-duration behavior.
+      const edgeLen = polylineLength(edge.points);
+      const travelTime = flow.speedPxPerSec
+        ? Math.max((edgeLen / Math.max(flow.speedPxPerSec, 1)) * 1000, 100)
+        : Math.max(flow.traverseTimeMs, 100);
       const speed = 1.0 / travelTime;
 
       const consumedArrivals = new Map<string, number>();
@@ -177,28 +214,86 @@ export class ParticleSystem {
     }
   }
 
+  /** Count an arrival for `flowName` — both globally (for `after:` deps) and
+   *  against the flow's stage's current run. Called when the absorption
+   *  effect finishes (or immediately when effects are disabled). */
+  private registerArrival(flowName: string) {
+    const count = this.arrivalCounts.get(flowName) ?? 0;
+    this.arrivalCounts.set(flowName, count + 1);
+
+    const emitter = this.emitters.find(e => e.flow.name === flowName);
+    const stageName = emitter?.flow.stage;
+    if (stageName) {
+      const stage = this.stageStates.get(stageName);
+      if (stage && stage.status === 'running') {
+        const cur = stage.runArrivals.get(flowName) ?? 0;
+        stage.runArrivals.set(flowName, cur + 1);
+      }
+    }
+  }
+
+  /** Build the absorption effect for a particle that just reached its node. */
+  private spawnArrivalEffect(p: Particle) {
+    const edge = this.edgeById.get(p.edgeId);
+    if (!edge || edge.points.length < 2) {
+      this.registerArrival(p.flowName);
+      return;
+    }
+    // Forward particles enter the target node at the polyline's end;
+    // reverse particles enter the source node at its start.
+    const pts = edge.points;
+    const entry = p.reverse ? pts[0]! : pts[pts.length - 1]!;
+    const prev = p.reverse ? pts[1]! : pts[pts.length - 2]!;
+    let dx = entry.x - prev.x;
+    let dy = entry.y - prev.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len > 0) { dx /= len; dy /= len; } else { dx = 1; dy = 0; }
+
+    if (this.effects.length >= this.maxEffects) {
+      this.registerArrival(p.flowName);
+      return;
+    }
+    this.effects.push({
+      nodeId: p.reverse ? edge.source : edge.target,
+      edgeId: p.edgeId,
+      entry: { ...entry },
+      dir: { x: dx, y: dy },
+      color: p.color,
+      flowName: p.flowName,
+      ageMs: 0,
+      durationMs: this.arrivalEffectMs,
+    });
+  }
+
   update(deltaMs: number, speedMultiplier: number) {
     const dt = deltaMs * speedMultiplier;
 
-    // 1. Move particles; collect arrivals into both global counts AND per-stage run counts.
+    // 0. Age absorption effects; a fully dissolved drop registers its
+    //    arrival, which is what lets the next stage/dependent flow proceed.
+    if (this.effects.length > 0) {
+      const liveEffects: ArrivalEffect[] = [];
+      for (const fx of this.effects) {
+        fx.ageMs += dt;
+        if (fx.ageMs >= fx.durationMs) {
+          this.registerArrival(fx.flowName);
+        } else {
+          liveEffects.push(fx);
+        }
+      }
+      this.effects = liveEffects;
+    }
+
+    // 1. Move particles; an arrival hands off to an absorption effect (the
+    //    arrival itself registers only once the effect dissolves).
     const surviving: Particle[] = [];
     for (const p of this.particles) {
       p.progress += p.speed * dt;
       const arrived = p.reverse ? p.progress <= 0 : p.progress >= 1;
       if (arrived) {
-        const count = this.arrivalCounts.get(p.flowName) ?? 0;
-        this.arrivalCounts.set(p.flowName, count + 1);
-
-        // If the flow is part of a stage, record the arrival against the
-        // stage's current run.
-        const emitter = this.emitters.find(e => e.flow.name === p.flowName);
-        const stageName = emitter?.flow.stage;
-        if (stageName) {
-          const stage = this.stageStates.get(stageName);
-          if (stage && stage.status === 'running') {
-            const cur = stage.runArrivals.get(p.flowName) ?? 0;
-            stage.runArrivals.set(p.flowName, cur + 1);
-          }
+        if (this.arrivalEffectMs > 0) {
+          this.spawnArrivalEffect(p);
+        } else {
+          this.registerArrival(p.flowName);
         }
       } else {
         surviving.push(p);
@@ -351,6 +446,7 @@ export class ParticleSystem {
 
   reset() {
     this.particles = [];
+    this.effects = [];
     this.arrivalCounts.clear();
     this.labelHolderIdByFlow.clear();
     this.nextParticleId = 0;

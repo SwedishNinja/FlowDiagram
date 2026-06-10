@@ -625,9 +625,25 @@ function FlowForm({ flow }: { flow: FlowNode }) {
           onChange={(v) => commit({ direction: v as 'forward' | 'reverse' })}
         />
       </Field>
-      <Field label="Traverse time (ms)">
-        <NumberInput initial={Math.round(flow.traverseTimeMs)} min={50} onCommit={(v) => commit({ traverseTimeMs: v })} />
+      <Field label="Pace">
+        <Segmented
+          options={[{ value: 'speed', label: 'Speed (px/s)' }, { value: 'time', label: 'Fixed (ms)' }]}
+          value={flow.speedPxPerSec != null ? 'speed' : 'time'}
+          onChange={(v) => {
+            if (v === 'speed') commit({ speedPxPerSec: Math.round(flow.speedPxPerSec ?? 150) });
+            else commit({ speedPxPerSec: null, traverseTimeMs: Math.round(flow.traverseTimeMs) });
+          }}
+        />
       </Field>
+      {flow.speedPxPerSec != null ? (
+        <Field label="Speed (px/s)">
+          <NumberInput key="speed" initial={Math.round(flow.speedPxPerSec)} min={10} onCommit={(v) => commit({ speedPxPerSec: v })} />
+        </Field>
+      ) : (
+        <Field label="Traverse time (ms)">
+          <NumberInput key="traverse" initial={Math.round(flow.traverseTimeMs)} min={50} onCommit={(v) => commit({ traverseTimeMs: v })} />
+        </Field>
+      )}
       <Field label="Continuous">
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <input type="checkbox" checked={!!flow.hasRate} onChange={(e) => commit({ hasRate: e.target.checked })} />

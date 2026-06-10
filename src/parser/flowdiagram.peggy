@@ -291,12 +291,14 @@ FlowBlock
       data: undefined,
       intervalMs: 1000,
       traverseTimeMs: 1500,
+      speedPxPerSec: undefined,
       startDelayMs: 0,
       direction: 'forward',
       color: undefined,
       after: [],
       hasRate: false,
     };
+    let sawTraverse = false;
     for (const prop of properties) {
       if (!prop) continue;
       if (prop.key === 'data') result.data = prop.value;
@@ -309,12 +311,16 @@ FlowBlock
         result.intervalMs = durationToMs(prop.value);
         result.hasRate = true;
       }
-      else if (prop.key === 'traverse_time') result.traverseTimeMs = durationToMs(prop.value);
+      else if (prop.key === 'traverse_time') { result.traverseTimeMs = durationToMs(prop.value); sawTraverse = true; }
+      else if (prop.key === 'speed') result.speedPxPerSec = prop.value;
       else if (prop.key === 'start_delay') result.startDelayMs = durationToMs(prop.value);
       else if (prop.key === 'direction') result.direction = prop.value;
       else if (prop.key === 'color') result.color = prop.value;
       else if (prop.key === 'after') result.after = prop.value;
     }
+    // Constant speed is the default model: unless the author wrote an
+    // explicit traverse_time:, dots move at a uniform px/s pace.
+    if (!sawTraverse && result.speedPxPerSec === undefined) result.speedPxPerSec = 150;
     result.loc = { start: location().start.offset, end: location().end.offset };
     return result;
   }
@@ -328,6 +334,8 @@ FlowProperty
   { return { key: 'every', value }; }
   / _ "traverse_time:" _ value:EveryValue _ NL
   { return { key: 'traverse_time', value }; }
+  / _ "speed:" _ value:Number ("px/s")? _ NL
+  { return { key: 'speed', value }; }
   / _ "start_delay:" _ value:EveryValue _ NL
   { return { key: 'start_delay', value }; }
   / _ "direction:" _ value:Direction _ NL

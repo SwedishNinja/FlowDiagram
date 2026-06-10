@@ -1,7 +1,7 @@
 import type { FlowDocument, LayoutResult } from '../types';
 import { drawGraph } from './drawGraph';
 import { ParticleSystem } from './particles';
-import { drawParticles, edgeLookupFromLayout } from './drawParticles';
+import { drawParticles, drawArrivalEffects, edgeLookupFromLayout, nodeLookupFromLayout } from './drawParticles';
 import { computeLayoutBounds } from './exportGif';
 import { computeViewportTransform } from './viewport';
 import { saveBlob } from './saveBlob';
@@ -67,6 +67,7 @@ export async function exportVideo(
   const { scale, offsetX, offsetY } = computeViewportTransform(width, height, viewport);
 
   const edgeLookup = edgeLookupFromLayout(layout.edges);
+  const nodeLookup = nodeLookupFromLayout(layout.nodes);
   const frameIntervalMs = 1000 / fps;
 
   // Decouple simulation dt from wall-clock: every step advances exactly
@@ -81,6 +82,7 @@ export async function exportVideo(
     drawGraph(ctx, layout, { background, scale });
     particleSystem.update(frameIntervalMs, 1);
     drawParticles(ctx, particleSystem, edgeLookup, 1);
+    drawArrivalEffects(ctx, particleSystem, nodeLookup, edgeLookup);
     ctx.restore();
   }
 

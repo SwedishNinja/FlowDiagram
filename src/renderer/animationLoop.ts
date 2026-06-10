@@ -1,7 +1,7 @@
 import type { LayoutResult } from '../types';
 import { drawGraph, computeEffectiveEdges, zoomCompensation } from './drawGraph';
 import { ParticleSystem } from './particles';
-import { drawParticles } from './drawParticles';
+import { drawParticles, drawArrivalEffects, nodeLookupFromLayout } from './drawParticles';
 
 const DEFAULT_COLLAPSE_THRESHOLD_PX = 200;
 
@@ -152,6 +152,7 @@ export function createAnimationLoop(
   let animationId: number | null = null;
   let lastTime: number | null = null;
   let currentLayout: LayoutResult | null = null;
+  let nodeLookup: ReturnType<typeof nodeLookupFromLayout> = () => undefined;
 
   function render(timestamp: number) {
     const state = getState();
@@ -205,6 +206,7 @@ export function createAnimationLoop(
     lastTime = timestamp;
 
     drawParticles(ctx, particleSystem, (id) => effectiveEdges.get(id), zc);
+    drawArrivalEffects(ctx, particleSystem, nodeLookup, (id) => effectiveEdges.get(id));
 
     if (state.exportFrame) {
       drawExportFrame(ctx, state.exportFrame, scale);
@@ -233,6 +235,7 @@ export function createAnimationLoop(
     },
     updateLayout(layout: LayoutResult) {
       currentLayout = layout;
+      nodeLookup = nodeLookupFromLayout(layout.nodes);
       const state = getState();
       if (state.ast) {
         particleSystem.init(state.ast, layout);

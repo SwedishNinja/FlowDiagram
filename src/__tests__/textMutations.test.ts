@@ -559,6 +559,20 @@ a -> b as ab
     parseOk(out);
   });
 
+  it('switches between speed and traverse_time pacing modes', () => {
+    const doc = parseOk(FLOW_SRC);
+    const out = updateFlow(FLOW_SRC, doc, 'login', { speedPxPerSec: 200 });
+    expect(out).toContain('speed: 200');
+    expect(out).not.toContain('traverse_time:');
+    parseOk(out);
+    // Setting a traverse time drops the flow back to fixed-duration mode.
+    const doc2 = parseOk(out);
+    const out2 = updateFlow(out, doc2, 'login', { traverseTimeMs: 900 });
+    expect(out2).toContain('traverse_time: 900ms');
+    expect(out2).not.toContain('speed:');
+    parseOk(out2);
+  });
+
   it('preserves leading indent for flows inside a @stage block', () => {
     const src = `@startuml
 component "A" as a
@@ -613,7 +627,7 @@ a -> b as ab
     const out = createFlow(src, doc, { name: 'second', connection: 'ab' });
     expect(out).toContain('@flow second on ab');
     expect(out).toContain('every: 1000ms');
-    expect(out).toContain('traverse_time: 1500ms');
+    expect(out).toContain('speed: 150');
     // Second flow must come after first.
     expect(out.indexOf('@flow second')).toBeGreaterThan(out.indexOf('@flow first'));
     parseOk(out);

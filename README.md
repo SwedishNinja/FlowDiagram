@@ -154,7 +154,11 @@ auth -> gw as result_conn : auth result
   data: "label"              # text shown on leading particle
   freq: 10/s                 # rate (also 10/m)
   every: 500ms               # interval (ms, s, m) — equivalent alternative to freq
-  traverse_time: 1s          # how long a particle takes to cross the edge
+  speed: 150                 # constant dot speed in px/s (the default — 150 px/s).
+                             # Travel time = edge length / speed, so dots pace
+                             # identically on short and long edges.
+  traverse_time: 1s          # legacy alternative: fixed time to cross the edge
+                             # regardless of its length (overrides the speed default)
   start_delay: 200ms         # initial delay (or response latency for dependent flows)
   direction: forward         # forward (default) or reverse — reverse sends particles
                              # from target back to source along the SAME connection
@@ -170,6 +174,8 @@ auth -> gw as result_conn : auth result
 **Flows with `after:`** are event-driven: each time ALL listed upstream flows have an unconsumed arrival, the dependent flow spawns exactly one particle and consumes one arrival from each dependency. `start_delay:` adds a per-arrival latency (models response latency). `every:`/`freq:` is ignored.
 
 **Reverse flows** (`direction: reverse`) spawn particles at the target end of the connection and travel to the source — useful for request/response patterns on a single connection.
+
+**Arrival absorption**: when a dot reaches its box it dissolves into it — a colored plume diffuses in from the entry direction and fades out over ~1 s, like a drop of dye in water. The arrival only *counts* (for `after:` dependencies and stage completion) once the plume has fully dissolved, so downstream flows and the next stage wait for the effect to finish.
 
 ### @stage blocks (scenario grouping)
 

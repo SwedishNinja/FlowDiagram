@@ -2,7 +2,7 @@ import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import type { FlowDocument, LayoutResult } from '../types';
 import { drawGraph } from './drawGraph';
 import { ParticleSystem } from './particles';
-import { drawParticles, edgeLookupFromLayout } from './drawParticles';
+import { drawParticles, drawArrivalEffects, edgeLookupFromLayout, nodeLookupFromLayout } from './drawParticles';
 import { computeViewportTransform } from './viewport';
 import { saveBlob } from './saveBlob';
 
@@ -63,6 +63,7 @@ export async function exportGif(
   const totalFrames = Math.ceil(duration * fps);
   const frameDelay = 1000 / fps;
   const edgeLookup = edgeLookupFromLayout(layout.edges);
+  const nodeLookup = nodeLookupFromLayout(layout.nodes);
 
   function renderAt(particleSystem: ParticleSystem) {
     ctx.fillStyle = background;
@@ -73,6 +74,7 @@ export async function exportGif(
     drawGraph(ctx, layout, { background, scale });
     particleSystem.update(frameDelay, 1);
     drawParticles(ctx, particleSystem, edgeLookup, 1);
+    drawArrivalEffects(ctx, particleSystem, nodeLookup, edgeLookup);
     ctx.restore();
     return ctx.getImageData(0, 0, width, height);
   }

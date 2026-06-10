@@ -1,5 +1,6 @@
 import type { FlowDocument, LayoutResult } from '../types';
 import { ParticleSystem } from './particles';
+import { polylineLength } from './pathUtils';
 
 /**
  * Run the particle system headlessly and report a sensible export duration.
@@ -17,9 +18,22 @@ import { ParticleSystem } from './particles';
 export function detectExportDuration(doc: FlowDocument, layout: LayoutResult): number {
   const SIM_STEP_MS = 16;
   const SIM_CAP_MS = 60_000;
-  const TRAIL_BUFFER_MS = 500;
+  // Trailing room for in-flight particles to finish their edges AND for the
+  // last arrival's absorption effect (~1 s) to fully dissolve.
+  const TRAIL_BUFFER_MS = 1500;
 
   const hasStages = doc.stages.length > 0;
+
+  // Effective traverse time per flow: constant-speed flows derive it from
+  // their edge's actual length; legacy flows use their fixed traverse_time.
+  const edgeLengths = new Map(layout.edges.map(e => [e.id, polylineLength(e.points)]));
+  const traverseMs = (flow: FlowDocument['flows'][number]): number => {
+    if (flow.speedPxPerSec) {
+      const len = edgeLengths.get(flow.connection) ?? 200;
+      return Math.max((len / Math.max(flow.speedPxPerSec, 1)) * 1000, 100);
+    }
+    return flow.traverseTimeMs;
+  };
 
   if (!hasStages) {
     // Heuristic for stage-less diagrams: two cycles of the longest rate-based
@@ -28,12 +42,14 @@ export function detectExportDuration(doc: FlowDocument, layout: LayoutResult): n
     let longestTraverse = 0;
     for (const flow of doc.flows) {
       if (flow.hasRate && flow.intervalMs > longestInterval) longestInterval = flow.intervalMs;
-      if (flow.traverseTimeMs > longestTraverse) longestTraverse = flow.traverseTimeMs;
+      const t = traverseMs(flow);
+      if (t > longestTraverse) longestTraverse = t;
     }
-    // Dependent-only chains (no rate) — estimate worst-case depth * traverse.
+    // Dependent-only chains (no rate) — estimate worst-case depth * hop time.
+    // Each hop = traverse + the ~1 s absorption before the next flow fires.
     if (longestInterval === 0) {
       const depth = longestDependencyChain(doc);
-      const ms = depth * longestTraverse + TRAIL_BUFFER_MS;
+      const ms = depth * (longestTraverse + 1000) + TRAIL_BUFFER_MS;
       return Math.max(1, Math.round(ms / 1000));
     }
     const ms = longestInterval * 2 + longestTraverse + TRAIL_BUFFER_MS;

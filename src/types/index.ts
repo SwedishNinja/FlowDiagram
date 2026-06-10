@@ -60,6 +60,10 @@ export interface FlowNode {
   data?: string;                      // data label shown on particles
   intervalMs: number;                 // ms between particle spawns (from freq: or every:)
   traverseTimeMs: number;             // how long a particle takes to traverse the edge
+  /** Constant dot speed in diagram px/s. When set, wins over traverseTimeMs —
+   *  travel time becomes edgeLength / speed so dots pace identically on short
+   *  and long edges. Unset only when `traverse_time:` was written explicitly. */
+  speedPxPerSec?: number;
   startDelayMs: number;               // delay before first spawn (or per arrival for dependent flows)
   direction: 'forward' | 'reverse';  // forward = source->target, reverse = target->source
   color?: string;                     // override particle color (hex or named)

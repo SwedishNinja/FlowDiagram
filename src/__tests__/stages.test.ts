@@ -3,11 +3,14 @@ import { parse } from '../parser/parser';
 import { computeLayout } from '../layout/layoutEngine';
 import { ParticleSystem } from '../renderer/particles';
 
-async function setup(source: string) {
+async function setup(source: string, opts: { absorbMs?: number } = {}) {
   const parsed = parse(source);
   if (!parsed.ok) throw new Error(parsed.error.message);
   const layout = await computeLayout(parsed.document);
   const ps = new ParticleSystem();
+  // Most lifecycle tests disable the arrival-absorption effect so timings
+  // exercise the stage machinery directly; the effect has its own tests.
+  ps.arrivalEffectMs = opts.absorbMs ?? 0;
   ps.init(parsed.document, layout);
   return { doc: parsed.document, layout, ps };
 }
@@ -178,5 +181,118 @@ a -> b as c1
     // emissions continue happening until the stage exits 'running'.
     const snap = ps.getStageSnapshot();
     expect(snap[0]!.completionCount).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('arrival absorption effect', () => {
+  const SCENE = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage login
+  @flow login_flow on c1
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+
+  it('arrival does not register until the effect fully dissolves', async () => {
+    const { ps } = await setup(SCENE, { absorbMs: 1000 });
+
+    // Particle arrives at ~100ms and hands off to the absorption effect:
+    // the stage must NOT complete yet.
+    stepFor(ps, 400);
+    expect(ps.getStageSnapshot()[0]!.completionCount).toBe(0);
+    expect(ps.effects.length).toBe(1);
+
+    // After the effect's full second has elapsed, the arrival lands.
+    stepFor(ps, 1100);
+    expect(ps.getStageSnapshot()[0]!.completionCount).toBe(1);
+    expect(ps.effects.length).toBe(0);
+  });
+
+  it('effect carries entry geometry pointing into the target node', async () => {
+    const { ps, layout } = await setup(SCENE, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects[0]!;
+    expect(fx.nodeId).toBe('b');
+    const edge = layout.edges.find(e => e.id === 'c1')!;
+    const end = edge.points[edge.points.length - 1]!;
+    expect(fx.entry).toEqual(end);
+    // dir is a unit vector
+    expect(Math.hypot(fx.dir.x, fx.dir.y)).toBeCloseTo(1, 5);
+  });
+});
+
+describe('constant px/s speed', () => {
+  function manualLayout(lengths: number[]) {
+    // Horizontal edges of the given lengths, far apart vertically.
+    return {
+      nodes: [],
+      groups: [],
+      width: 1000,
+      height: 1000,
+      edges: lengths.map((len, i) => ({
+        id: `e${i}`,
+        source: `s${i}`,
+        target: `t${i}`,
+        points: [{ x: 0, y: i * 100 }, { x: len, y: i * 100 }],
+        lineStyle: 'solid' as const,
+        arrowStyle: 'forward' as const,
+      })),
+    };
+  }
+
+  it('travel time scales with edge length at a fixed px/s', async () => {
+    const source = `@startuml
+component "A" as a
+component "B" as b
+@enduml
+`;
+    const parsed = parse(source);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const doc = parsed.document;
+    doc.flows = [
+      { name: 'short', connection: 'e0', intervalMs: 1000, traverseTimeMs: 1500, speedPxPerSec: 100, startDelayMs: 0, direction: 'forward', after: [] },
+      { name: 'long', connection: 'e1', intervalMs: 1000, traverseTimeMs: 1500, speedPxPerSec: 100, startDelayMs: 0, direction: 'forward', after: [] },
+    ];
+
+    const ps = new ParticleSystem();
+    ps.arrivalEffectMs = 0;
+    ps.init(doc, manualLayout([100, 300]));
+
+    // One-shot flows fire immediately. 100px @ 100px/s = 1s; 300px = 3s.
+    stepFor(ps, 1100);
+    expect(ps.particles.find(p => p.flowName === 'short')).toBeUndefined();
+    expect(ps.particles.find(p => p.flowName === 'long')).toBeDefined();
+
+    stepFor(ps, 2100);
+    expect(ps.particles.find(p => p.flowName === 'long')).toBeUndefined();
+  });
+
+  it('parser: speed property and px/s default', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@flow fast on c1
+  speed: 300
+
+@flow legacy on c1
+  traverse_time: 250ms
+
+@flow defaulted on c1
+@enduml
+`;
+    const parsed = parse(src);
+    if (!parsed.ok) throw new Error(parsed.error.message);
+    const flows = parsed.document.flows;
+    expect(flows.find(f => f.name === 'fast')!.speedPxPerSec).toBe(300);
+    expect(flows.find(f => f.name === 'legacy')!.speedPxPerSec).toBeUndefined();
+    expect(flows.find(f => f.name === 'legacy')!.traverseTimeMs).toBe(250);
+    expect(flows.find(f => f.name === 'defaulted')!.speedPxPerSec).toBe(150);
   });
 });

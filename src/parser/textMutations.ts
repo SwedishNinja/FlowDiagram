@@ -716,6 +716,7 @@ export function createFlowChain(
     color?: string | null;
     intervalMs?: number;
     traverseTimeMs?: number;
+    speedPxPerSec?: number;
     /** When true (default), the first hop repeats on `intervalMs`. */
     continuous?: boolean;
   },
@@ -756,7 +757,8 @@ export function createFlowChain(
       // Only the first hop carries a rate; later hops fire once per arrival.
       hasRate: isFirst && continuous,
       intervalMs: opts.intervalMs ?? 1000,
-      traverseTimeMs: opts.traverseTimeMs ?? 1500,
+      traverseTimeMs: opts.traverseTimeMs,
+      speedPxPerSec: opts.speedPxPerSec,
       direction: hop.direction,
       after: isFirst ? [] : [flowNames[i - 1]!],
     });
@@ -769,7 +771,7 @@ export function createFlowChain(
 
 /**
  * Append a new @flow block. Optional fields default to a sensible canonical
- * flow: every 1000ms, 1500ms traverse time, forward direction.
+ * flow: every 1000ms, constant 150 px/s dot speed, forward direction.
  *
  * Stage handling:
  *   • opts.stage is null/undefined (default) → insert at root level. Anchored
@@ -789,6 +791,7 @@ export function createFlow(
     intervalMs?: number;
     hasRate?: boolean;
     traverseTimeMs?: number;
+    speedPxPerSec?: number;
     direction?: 'forward' | 'reverse';
     startDelayMs?: number;
     after?: string[];
@@ -809,13 +812,15 @@ function buildFlowLines(opts: {
   intervalMs?: number;
   hasRate?: boolean;
   traverseTimeMs?: number;
+  /** Constant px/s pace — the default for new flows. An explicit
+   *  traverseTimeMs in opts switches the block to fixed-duration mode. */
+  speedPxPerSec?: number;
   direction?: 'forward' | 'reverse';
   startDelayMs?: number;
   after?: string[];
 }): string[] {
   const intervalMs = opts.intervalMs ?? 1000;
   const hasRate = opts.hasRate ?? true;
-  const traverseTimeMs = opts.traverseTimeMs ?? 1500;
   const direction = opts.direction ?? 'forward';
   const startDelayMs = opts.startDelayMs ?? 0;
   const after = opts.after ?? [];
@@ -823,7 +828,11 @@ function buildFlowLines(opts: {
   const lines: string[] = [`@flow ${opts.name} on ${opts.connection}`];
   if (opts.data) lines.push(`  data: "${opts.data}"`);
   if (hasRate) lines.push(`  every: ${Math.round(intervalMs)}ms`);
-  lines.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
+  if (opts.traverseTimeMs !== undefined && opts.speedPxPerSec === undefined) {
+    lines.push(`  traverse_time: ${Math.round(opts.traverseTimeMs)}ms`);
+  } else {
+    lines.push(`  speed: ${Math.round(opts.speedPxPerSec ?? 150)}`);
+  }
   if (startDelayMs > 0) lines.push(`  start_delay: ${Math.round(startDelayMs)}ms`);
   if (direction === 'reverse') lines.push(`  direction: reverse`);
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
@@ -1393,6 +1402,9 @@ export function updateFlow(
     color?: string | null;
     direction?: 'forward' | 'reverse';
     traverseTimeMs?: number;
+    /** Set a px/s pace (switches the flow to constant-speed mode). Pass null
+     *  to drop speed mode and fall back to traverse_time. */
+    speedPxPerSec?: number | null;
     intervalMs?: number;
     hasRate?: boolean;
     startDelayMs?: number;
@@ -1406,6 +1418,14 @@ export function updateFlow(
   const color = 'color' in updates ? updates.color : flow.color;
   const direction = updates.direction ?? flow.direction;
   const traverseTimeMs = updates.traverseTimeMs ?? flow.traverseTimeMs;
+  // Setting traverseTimeMs (without an explicit speed) switches the flow to
+  // fixed-duration mode; otherwise the existing/updated speed wins.
+  const speedPxPerSec =
+    'speedPxPerSec' in updates
+      ? updates.speedPxPerSec
+      : updates.traverseTimeMs !== undefined
+        ? null
+        : flow.speedPxPerSec;
   const intervalMs = updates.intervalMs ?? flow.intervalMs;
   const hasRate = updates.hasRate ?? !!flow.hasRate;
   const startDelayMs = updates.startDelayMs ?? flow.startDelayMs;
@@ -1423,7 +1443,8 @@ export function updateFlow(
   const body: string[] = [`@flow ${name} on ${flow.connection}`];
   if (data) body.push(`  data: "${data}"`);
   if (hasRate) body.push(`  every: ${Math.round(intervalMs)}ms`);
-  body.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
+  if (speedPxPerSec != null) body.push(`  speed: ${Math.round(speedPxPerSec)}`);
+  else body.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
   if (startDelayMs > 0) body.push(`  start_delay: ${Math.round(startDelayMs)}ms`);
   if (direction === 'reverse') body.push(`  direction: reverse`);
   if (color) body.push(`  color: #${color.replace(/^#/, '')}`);
