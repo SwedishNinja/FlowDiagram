@@ -47,6 +47,24 @@ export function normalizeColor(input: string): string {
   return trimmed;
 }
 
+/** Linear blend between two colors, t=0 → a, t=1 → b. Returns #rrggbb. */
+export function mixColors(a: string, b: string, t: number): string {
+  const ha = normalizeColor(a);
+  const hb = normalizeColor(b);
+  // If either side isn't a hex we can decompose, snap to the nearer end.
+  if (!/^#[0-9a-f]{6}$/.test(ha) || !/^#[0-9a-f]{6}$/.test(hb)) {
+    return t < 0.5 ? ha : hb;
+  }
+  const k = Math.max(0, Math.min(1, t));
+  let out = '#';
+  for (let i = 1; i < 7; i += 2) {
+    const ca = parseInt(ha.slice(i, i + 2), 16);
+    const cb = parseInt(hb.slice(i, i + 2), 16);
+    out += Math.round(ca + (cb - ca) * k).toString(16).padStart(2, '0');
+  }
+  return out;
+}
+
 /** Append an alpha value (00-FF) to a color, converting to 6-digit hex if needed */
 export function withAlpha(color: string, alphaHex: string): string {
   const normalized = normalizeColor(color);

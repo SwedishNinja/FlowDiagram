@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeColor, withAlpha } from '../renderer/colorUtils';
+import { normalizeColor, withAlpha, mixColors } from '../renderer/colorUtils';
 
 describe('colorUtils', () => {
   describe('normalizeColor', () => {
@@ -22,6 +22,26 @@ describe('colorUtils', () => {
 
     it('returns unknown CSS names as-is', () => {
       expect(normalizeColor('rebeccapurple')).toBe('rebeccapurple');
+    });
+  });
+
+  describe('mixColors', () => {
+    it('returns the endpoints at t=0 and t=1', () => {
+      expect(mixColors('#3b82f6', '#ef4444', 0)).toBe('#3b82f6');
+      expect(mixColors('#3b82f6', '#ef4444', 1)).toBe('#ef4444');
+    });
+
+    it('blends channel-wise at the midpoint', () => {
+      expect(mixColors('#000000', '#ffffff', 0.5)).toBe('#808080');
+    });
+
+    it('accepts named colors', () => {
+      expect(mixColors('blue', 'red', 1)).toBe('#ef4444');
+    });
+
+    it('snaps to the nearer end for non-hex CSS names', () => {
+      expect(mixColors('rebeccapurple', '#ef4444', 0.2)).toBe('rebeccapurple');
+      expect(mixColors('rebeccapurple', '#ef4444', 0.8)).toBe('#ef4444');
     });
   });
 

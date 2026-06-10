@@ -27,7 +27,7 @@ function stubContext() {
   return { ctx: ctx as unknown as CanvasRenderingContext2D, calls, colorStops };
 }
 
-function systemWithEffect(ageMs: number, handoffPoint?: { x: number; y: number }) {
+function systemWithEffect(ageMs: number, handoffPoint?: { x: number; y: number }, handoffColor?: string) {
   const ps = new ParticleSystem();
   ps.effects.push({
     nodeId: 'b',
@@ -39,6 +39,7 @@ function systemWithEffect(ageMs: number, handoffPoint?: { x: number; y: number }
     ageMs,
     durationMs: 1000,
     handoffPoint,
+    handoffColor,
   });
   return ps;
 }
@@ -91,5 +92,34 @@ describe('drawArrivalEffects', () => {
     // Exactly between dissolve and gather — the dye must NOT have faded out.
     drawArrivalEffects(ctx, systemWithEffect(500, { x: 220, y: 50 }), nodeLookup, edgeLookup);
     expect(calls.filter(c => c === 'fill').length).toBeGreaterThan(0);
+  });
+
+  it('plume color morphs toward the handoff color during the gather', () => {
+    // Blue → red handoff, sampled deep into the glide: stops must no longer
+    // be pure blue, and by the very end they are (almost) pure red.
+    const late = stubContext();
+    drawArrivalEffects(late.ctx, systemWithEffect(999, { x: 220, y: 50 }, '#ef4444'), nodeLookup, edgeLookup);
+    expect(late.colorStops.length).toBeGreaterThan(0);
+    for (const stop of late.colorStops) {
+      expect(stop.startsWith('#ef4444')).toBe(true);
+    }
+
+    const mid = stubContext();
+    drawArrivalEffects(mid.ctx, systemWithEffect(750, { x: 220, y: 50 }, '#ef4444'), nodeLookup, edgeLookup);
+    for (const stop of mid.colorStops) {
+      expect(stop.startsWith('#3b82f6')).toBe(false);
+      expect(stop.startsWith('#ef4444')).toBe(false);
+    }
+  });
+
+  it('same-color handoff keeps the original color throughout', () => {
+    const { colorStops } = (() => {
+      const s = stubContext();
+      drawArrivalEffects(s.ctx, systemWithEffect(900, { x: 220, y: 50 }, '#3b82f6'), nodeLookup, edgeLookup);
+      return s;
+    })();
+    for (const stop of colorStops) {
+      expect(stop.startsWith('#3b82f6')).toBe(true);
+    }
   });
 });

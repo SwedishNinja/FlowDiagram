@@ -258,6 +258,30 @@ b -> c as c2
     expect(fx.handoffPoint).toEqual(next.points[0]);
   });
 
+  it('handoff carries the continuing flow color for the morph', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+b -> c as c2
+
+@flow first on c1
+  traverse_time: 100ms
+  color: blue
+@flow second on c2
+  color: red
+  after: first
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const fx = ps.effects.find(f => f.flowName === 'first')!;
+    expect(fx.color).toBe('#3b82f6');         // blue (normalized)
+    expect(fx.handoffColor).toBe('#ef4444');  // red — the next dot's color
+  });
+
   it('no handoff when the dependent flow departs from a different node', async () => {
     const src = `@startuml
 component "A" as a

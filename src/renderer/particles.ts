@@ -34,6 +34,10 @@ export interface ArrivalEffect {
    *  half-dissolves and re-condenses here instead of fading out, so it
    *  visually becomes the next flow's dot. */
   handoffPoint?: Point;
+  /** The continuing flow's color. While gathering, the plume blends from its
+   *  own color into this one so it condenses already wearing the next dot's
+   *  color (a blue drop handing off to a red flow turns red mid-glide). */
+  handoffColor?: string;
 }
 
 // Distinct colors for different flows
@@ -250,15 +254,16 @@ export class ParticleSystem {
   }
 
   /** Where (if anywhere) the journey continues after `flowName` arrives at
-   *  `nodeId`: the departure point of a flow-level dependent (`after:` lists
-   *  this flow), or of a next-stage starting flow when this flow's stage
-   *  chains into another. Null → nothing continues, full dissolve. */
-  private findHandoffPoint(flowName: string, nodeId: string): Point | null {
+   *  `nodeId`: the departure point AND color of a flow-level dependent
+   *  (`after:` lists this flow), or of a next-stage starting flow when this
+   *  flow's stage chains into another. Null → nothing continues, full
+   *  dissolve. */
+  private findHandoff(flowName: string, nodeId: string): { point: Point; color: string } | null {
     // 1. Direct dependents — relays inside or outside stages.
     for (const e of this.emitters) {
       if (!e.flow.after.includes(flowName)) continue;
       const pt = this.departurePointAt(e, nodeId);
-      if (pt) return pt;
+      if (pt) return { point: pt, color: e.color };
     }
 
     // 2. Stage chaining: flows that fire when a stage depending on this
@@ -273,7 +278,7 @@ export class ParticleSystem {
           // with deps wait for arrivals and are covered by case 1.
           if (e.flow.stage !== next.name || e.flow.after.length > 0) continue;
           const pt = this.departurePointAt(e, nodeId);
-          if (pt) return pt;
+          if (pt) return { point: pt, color: e.color };
         }
       }
     }
@@ -302,6 +307,7 @@ export class ParticleSystem {
       return;
     }
     const nodeId = p.reverse ? edge.source : edge.target;
+    const handoff = this.findHandoff(p.flowName, nodeId);
     this.effects.push({
       nodeId,
       edgeId: p.edgeId,
@@ -311,7 +317,8 @@ export class ParticleSystem {
       flowName: p.flowName,
       ageMs: 0,
       durationMs: this.arrivalEffectMs,
-      handoffPoint: this.findHandoffPoint(p.flowName, nodeId) ?? undefined,
+      handoffPoint: handoff?.point,
+      handoffColor: handoff?.color,
     });
   }
 

@@ -1,5 +1,6 @@
 import type { Point } from '../types';
 import { pointAtProgress } from './pathUtils';
+import { mixColors } from './colorUtils';
 import type { ParticleSystem } from './particles';
 
 const PARTICLE_RADIUS = 4;
@@ -166,6 +167,7 @@ export function drawArrivalEffects(
     let r: number;
     let alpha: number;
     let wispScale = 1; // wisps shrink away as the plume re-condenses
+    let color = fx.color;
 
     if (!fx.handoffPoint) {
       // Full dissolve: expand along the travel direction and fade to zero.
@@ -202,6 +204,11 @@ export function drawArrivalEffects(
         r = from.r + (5 - from.r) * ease;
         alpha = from.a + (0.9 - from.a) * ease;
         wispScale = 1 - ease;
+        // Morph into the continuing flow's color mid-glide so the plume
+        // condenses already wearing the next dot's color.
+        if (fx.handoffColor && fx.handoffColor !== fx.color) {
+          color = mixColors(fx.color, fx.handoffColor, ease);
+        }
       }
     }
     if (alpha <= 0) continue;
@@ -223,9 +230,9 @@ export function drawArrivalEffects(
     ];
     for (const [bx, by, br, ba] of blobs) {
       const grad = ctx.createRadialGradient(bx, by, 0, bx, by, br);
-      grad.addColorStop(0, hexA(fx.color, ba));
-      grad.addColorStop(0.55, hexA(fx.color, ba * 0.45));
-      grad.addColorStop(1, hexA(fx.color, 0));
+      grad.addColorStop(0, hexA(color, ba));
+      grad.addColorStop(0.55, hexA(color, ba * 0.45));
+      grad.addColorStop(1, hexA(color, 0));
       ctx.fillStyle = grad;
       ctx.beginPath();
       ctx.arc(bx, by, br, 0, Math.PI * 2);
