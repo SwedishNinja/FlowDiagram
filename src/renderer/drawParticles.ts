@@ -11,6 +11,54 @@ const PARTICLE_LABEL_HEIGHT = 16;
 
 export type EdgeLookup = (edgeId: string) => { points: Point[]; suppressed: boolean } | undefined;
 
+/** Fraction of the edge covered by a comet trail's wake. */
+const TRAIL_PROGRESS = 0.35;
+
+/** Draw a comet wake along `points` behind a head at `head` progress. The
+ *  wake brightens toward the head; `fade` scales the whole thing (used by
+ *  afterglows cooling down after the dot arrives). */
+function drawWake(
+  ctx: CanvasRenderingContext2D,
+  points: Point[],
+  head: number,
+  reverse: boolean,
+  color: string,
+  zc: number,
+  fade: number,
+) {
+  const steps = 6;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let i = 0; i < steps; i++) {
+    // f = 0 is the oldest (faintest) slice, f = 1 touches the head.
+    const at = (f: number) => {
+      const p = reverse ? head + TRAIL_PROGRESS * (1 - f) : head - TRAIL_PROGRESS * (1 - f);
+      return Math.max(0, Math.min(1, p));
+    };
+    const p0 = at(i / steps);
+    const p1 = at((i + 1) / steps);
+    if (p0 === p1) continue;
+    const a = pointAtProgress(points, p0);
+    const b = pointAtProgress(points, p1);
+    const alpha = fade * 0.55 * ((i + 0.5) / steps);
+
+    ctx.strokeStyle = hexA(color, alpha * 0.3);
+    ctx.lineWidth = 5 * zc;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = hexA(color, alpha);
+    ctx.lineWidth = 2.2 * zc;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Shared particle renderer used by the live canvas AND both export paths.
  *  `zc` is the zoom-compensation factor from `zoomCompensation(scale)` —
  *  pass 1 for exports (rendered at scale=1) so sizes match the baseline. */
@@ -48,6 +96,21 @@ export function drawParticles(
   // Forget label holders for flows that have no live particles anymore.
   for (const flowName of [...holders.keys()]) {
     if (!liveByFlow.has(flowName)) holders.delete(flowName);
+  }
+
+  // Comet trails: cooling afterglows first, then live wakes — both under
+  // the dots so the head stays crisp.
+  for (const glow of particleSystem.trailGlows) {
+    const eff = edgeLookup(glow.edgeId);
+    if (!eff || eff.suppressed || eff.points.length < 2) continue;
+    const fade = 1 - glow.ageMs / glow.durationMs;
+    drawWake(ctx, eff.points, glow.reverse ? 0 : 1, glow.reverse, glow.color, zc, fade);
+  }
+  for (const particle of particleSystem.particles) {
+    if (!particle.trail) continue;
+    const eff = edgeLookup(particle.edgeId);
+    if (!eff || eff.suppressed || eff.points.length < 2) continue;
+    drawWake(ctx, eff.points, particle.progress, particle.reverse, particle.color, zc, 1);
   }
 
   for (const particle of particleSystem.particles) {
@@ -299,6 +362,282 @@ function drawOutlineEffect(
   ctx.restore();
 }
 
+/** Deterministic PRNG (mulberry32) — sparks must draw identically across
+ *  the GIF exporter's two simulation passes. */
+function mulberry32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const smoothstep = (s: number) => s * s * (3 - 2 * s);
+
+/** Sonar ripple: rings expand from the hit point across the box and fade.
+ *  With a handoff, the second half plays in reverse — rings contract onto
+ *  the departure point, condensing into the next dot. */
+function drawRippleEffect(
+  ctx: CanvasRenderingContext2D,
+  fx: import('./particles').ArrivalEffect,
+  node: NodeRect,
+  t: number,
+) {
+  const diag = Math.hypot(node.width, node.height);
+  const RINGS = 3;
+  const STAGGER = 0.16;
+
+  interface Ring { x: number; y: number; r: number; alpha: number; color: string }
+  const rings: Ring[] = [];
+
+  if (!fx.handoffPoint) {
+    for (let i = 0; i < RINGS; i++) {
+      const prog = t * 1.25 - i * STAGGER;
+      if (prog <= 0 || prog >= 1) continue;
+      rings.push({
+        x: fx.entry.x,
+        y: fx.entry.y,
+        r: 3 + prog * diag * 0.6,
+        alpha: 0.75 * (1 - prog) * (1 - t * 0.35),
+        color: fx.color,
+      });
+    }
+  } else if (t < 0.5) {
+    for (let i = 0; i < RINGS; i++) {
+      const prog = (t / 0.5) * 0.85 - i * STAGGER;
+      if (prog <= 0 || prog >= 1) continue;
+      rings.push({
+        x: fx.entry.x,
+        y: fx.entry.y,
+        r: 3 + prog * diag * 0.5,
+        alpha: 0.75 * (1 - prog),
+        color: fx.color,
+      });
+    }
+  } else {
+    const s = (t - 0.5) / 0.5;
+    const ease = smoothstep(s);
+    const color =
+      fx.handoffColor && fx.handoffColor !== fx.color
+        ? mixColors(fx.color, fx.handoffColor, ease)
+        : fx.color;
+    for (let i = 0; i < RINGS; i++) {
+      const prog = s * 1.25 - i * STAGGER;
+      if (prog <= 0 || prog >= 1) continue;
+      rings.push({
+        x: fx.handoffPoint.x,
+        y: fx.handoffPoint.y,
+        r: Math.max(3 + (1 - prog) * diag * 0.45, 2),
+        alpha: 0.4 + 0.5 * prog,
+        color,
+      });
+    }
+    // Condensation core brightening at the departure point.
+    rings.push({ x: fx.handoffPoint.x, y: fx.handoffPoint.y, r: 4, alpha: 0.9 * ease, color });
+  }
+  if (rings.length === 0) return;
+
+  ctx.save();
+  roundedRectPath(ctx, node.x, node.y, node.width, node.height, NODE_CORNER_RADIUS);
+  ctx.clip();
+  for (const ring of rings) {
+    // Soft halo + crisp ring.
+    ctx.strokeStyle = hexA(ring.color, ring.alpha * 0.25);
+    ctx.lineWidth = 4.5;
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = hexA(ring.color, ring.alpha);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** Liquid fill: translucent color pours in from the entry side behind a
+ *  wavy surface line, then evaporates — or, on a handoff, the band slides
+ *  toward the departure point and drains out through it. */
+function drawFillEffect(
+  ctx: CanvasRenderingContext2D,
+  fx: import('./particles').ArrivalEffect,
+  node: NodeRect,
+  t: number,
+) {
+  // Fill advances along the dominant axis of the entry direction.
+  const axisX = Math.abs(fx.dir.x) >= Math.abs(fx.dir.y);
+  const lo = axisX ? node.x : node.y;
+  const size = axisX ? node.width : node.height;
+  const cross0 = axisX ? node.y : node.x;
+  const cross1 = axisX ? node.y + node.height : node.x + node.width;
+  // Entering "from the low side" means the band anchors at the low edge.
+  const fromLow = axisX ? fx.dir.x >= 0 : fx.dir.y >= 0;
+
+  const MAX_FRACTION = 0.45;
+  let b0: number; // trailing boundary (axis coordinate)
+  let b1: number; // leading boundary — gets the wavy surface
+  let alpha: number;
+  let color = fx.color;
+
+  const bandAt = (len: number): [number, number] =>
+    fromLow ? [lo, lo + len] : [lo + size - len, lo + size];
+
+  if (!fx.handoffPoint) {
+    // Pour in, hold, evaporate.
+    const len =
+      t < 0.45
+        ? smoothstep(t / 0.45) * MAX_FRACTION * size
+        : t < 0.6
+          ? MAX_FRACTION * size
+          : MAX_FRACTION * size * (1 - 0.45 * ((t - 0.6) / 0.4));
+    [b0, b1] = bandAt(len);
+    alpha = t < 0.1 ? 0.45 * (t / 0.1) : t < 0.5 ? 0.45 : 0.45 * (1 - (t - 0.5) / 0.5);
+  } else if (t < 0.5) {
+    const len = smoothstep(t / 0.5) * MAX_FRACTION * size;
+    [b0, b1] = bandAt(len);
+    alpha = t < 0.1 ? 0.45 * (t / 0.1) : 0.45;
+  } else {
+    // Slide toward the departure point's coordinate on this axis and drain.
+    const s = (t - 0.5) / 0.5;
+    const ease = smoothstep(s);
+    const exitA = Math.max(lo, Math.min(lo + size, axisX ? fx.handoffPoint.x : fx.handoffPoint.y));
+    const [h0, h1] = bandAt(MAX_FRACTION * size);
+    b0 = h0 + (exitA - h0) * ease;
+    b1 = h1 + (exitA - h1) * ease;
+    alpha = 0.45;
+    if (fx.handoffColor && fx.handoffColor !== fx.color) {
+      color = mixColors(fx.color, fx.handoffColor, ease);
+    }
+  }
+  if (alpha <= 0 || Math.abs(b1 - b0) < 0.5) return;
+
+  // The surface (wavy) edge is the boundary facing away from the anchor —
+  // during the handoff slide both move, the leading one keeps the wave.
+  const waveA = fromLow ? Math.max(b0, b1) : Math.min(b0, b1);
+  const flatA = fromLow ? Math.min(b0, b1) : Math.max(b0, b1);
+  const amp = Math.min(2.5, Math.abs(b1 - b0) * 0.3);
+  const phase = fx.ageMs / 90;
+  const steps = 16;
+  const pt = (a: number, c: number): Point => (axisX ? { x: a, y: c } : { x: c, y: a });
+
+  ctx.save();
+  roundedRectPath(ctx, node.x, node.y, node.width, node.height, NODE_CORNER_RADIUS);
+  ctx.clip();
+
+  ctx.beginPath();
+  const start = pt(flatA, cross0);
+  ctx.moveTo(start.x, start.y);
+  const flatEnd = pt(flatA, cross1);
+  ctx.lineTo(flatEnd.x, flatEnd.y);
+  for (let i = 0; i <= steps; i++) {
+    const c = cross1 - ((cross1 - cross0) * i) / steps;
+    const a = waveA + amp * Math.sin(c * 0.45 + phase);
+    const p = pt(a, c);
+    ctx.lineTo(p.x, p.y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = hexA(color, alpha);
+  ctx.fill();
+
+  // Brighter surface line on the wave.
+  ctx.beginPath();
+  for (let i = 0; i <= steps; i++) {
+    const c = cross0 + ((cross1 - cross0) * i) / steps;
+    const a = waveA + amp * Math.sin(c * 0.45 + phase);
+    const p = pt(a, c);
+    if (i === 0) ctx.moveTo(p.x, p.y);
+    else ctx.lineTo(p.x, p.y);
+  }
+  ctx.strokeStyle = hexA(color, Math.min(alpha * 1.6, 1));
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/** Spark burst: the dot shatters into sparks that scatter into the box and
+ *  burn out — or, on a handoff, swarm back together at the departure point
+ *  and recombine into the next dot. */
+function drawSparksEffect(
+  ctx: CanvasRenderingContext2D,
+  fx: import('./particles').ArrivalEffect,
+  node: NodeRect,
+  t: number,
+) {
+  const N = 8;
+  const minDim = Math.min(node.width, node.height);
+  const rng = mulberry32(fx.seed * 7919 + 1);
+  const baseAng = Math.atan2(fx.dir.y, fx.dir.x);
+
+  // All randomness drawn up front in a fixed order — stable per seed.
+  const sparks = Array.from({ length: N }, () => ({
+    ang: baseAng + (rng() - 0.5) * 2.4,
+    dist: (0.25 + 0.6 * rng()) * minDim * 0.9,
+    curve: (rng() - 0.5) * 16,
+    size: 1.6 + rng() * 1.2,
+  }));
+
+  const scatterPos = (sp: (typeof sparks)[number], u: number): Point => {
+    const eo = 1 - (1 - u) * (1 - u) * (1 - u);
+    const wob = Math.sin(u * Math.PI) * sp.curve;
+    return {
+      x: fx.entry.x + Math.cos(sp.ang) * sp.dist * eo - Math.sin(sp.ang) * wob,
+      y: fx.entry.y + Math.sin(sp.ang) * sp.dist * eo + Math.cos(sp.ang) * wob,
+    };
+  };
+
+  ctx.save();
+  roundedRectPath(ctx, node.x, node.y, node.width, node.height, NODE_CORNER_RADIUS);
+  ctx.clip();
+
+  for (const sp of sparks) {
+    let pos: Point;
+    let alpha: number;
+    let r: number;
+    let color = fx.color;
+
+    if (!fx.handoffPoint) {
+      pos = scatterPos(sp, t);
+      alpha = (t < 0.1 ? t / 0.1 : 1 - (t - 0.1) / 0.9) * 0.95;
+      r = sp.size * (1 - 0.4 * t);
+    } else if (t < 0.5) {
+      pos = scatterPos(sp, t / 0.5);
+      alpha = (t < 0.1 ? t / 0.1 : 1) * 0.95;
+      r = sp.size;
+    } else {
+      const s = (t - 0.5) / 0.5;
+      const ease = smoothstep(s);
+      const from = scatterPos(sp, 1);
+      pos = {
+        x: from.x + (fx.handoffPoint.x - from.x) * ease,
+        y: from.y + (fx.handoffPoint.y - from.y) * ease,
+      };
+      alpha = 0.95;
+      r = sp.size + (2 - sp.size) * ease;
+      if (fx.handoffColor && fx.handoffColor !== fx.color) {
+        color = mixColors(fx.color, fx.handoffColor, ease);
+      }
+    }
+    if (alpha <= 0 || r <= 0) continue;
+
+    ctx.fillStyle = hexA(color, alpha * 0.25);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = hexA(color, alpha);
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 /** Render the ink-drop absorption effects: a colored plume diffuses into the
  *  node from the particle's entry point, expands along its travel direction,
  *  then fades to nothing. When the effect carries a handoff point (a next
@@ -324,6 +663,18 @@ export function drawArrivalEffects(
 
     if (fx.kind === 'outline') {
       drawOutlineEffect(ctx, fx, node, t);
+      continue;
+    }
+    if (fx.kind === 'ripple') {
+      drawRippleEffect(ctx, fx, node, t);
+      continue;
+    }
+    if (fx.kind === 'fill') {
+      drawFillEffect(ctx, fx, node, t);
+      continue;
+    }
+    if (fx.kind === 'sparks') {
+      drawSparksEffect(ctx, fx, node, t);
       continue;
     }
 

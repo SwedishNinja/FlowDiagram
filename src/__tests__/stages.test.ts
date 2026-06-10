@@ -261,6 +261,65 @@ a -> c as c2
     expect(ps.effects.find(f => f.flowName === 'overridden')!.kind).toBe('dissolve');
   });
 
+  it('parses the new effect kinds and assigns distinct seeds', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+a -> c as c2
+
+@flow ripples on c1
+  traverse_time: 100ms
+  effect: ripple
+@flow bursts on c2
+  traverse_time: 100ms
+  effect: sparks
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 400);
+
+    const ripple = ps.effects.find(f => f.flowName === 'ripples')!;
+    const sparks = ps.effects.find(f => f.flowName === 'bursts')!;
+    expect(ripple.kind).toBe('ripple');
+    expect(sparks.kind).toBe('sparks');
+    expect(ripple.seed).not.toBe(sparks.seed);
+  });
+
+  it('comet trail: glow spawns on arrival per flow/diagram setting', async () => {
+    const src = `@startuml
+trail: true
+
+component "A" as a
+component "B" as b
+component "C" as c
+a -> b as c1
+a -> c as c2
+
+@flow trailed on c1
+  traverse_time: 100ms
+@flow plain on c2
+  traverse_time: 100ms
+  trail: false
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    stepFor(ps, 64);
+    // Mid-flight: the diagram-default flow carries a trail, the opt-out not.
+    expect(ps.particles.find(p => p.flowName === 'trailed')!.trail).toBe(true);
+    expect(ps.particles.find(p => p.flowName === 'plain')!.trail).toBe(false);
+
+    stepFor(ps, 200);
+    // Both arrived; only the trailed flow leaves an afterglow.
+    expect(ps.trailGlows).toHaveLength(1);
+    expect(ps.trailGlows[0]!.edgeId).toBe('c1');
+
+    // Afterglows expire on their own.
+    stepFor(ps, 600);
+    expect(ps.trailGlows).toHaveLength(0);
+  });
+
   it('effect: none skips the effect AND the arrival delay', async () => {
     const src = `@startuml
 component "A" as a

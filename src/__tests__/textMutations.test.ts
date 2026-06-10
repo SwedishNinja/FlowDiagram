@@ -573,6 +573,25 @@ a -> b as ab
     parseOk(out2);
   });
 
+  it('round-trips effect and trail overrides', () => {
+    const doc = parseOk(FLOW_SRC);
+    const out = updateFlow(FLOW_SRC, doc, 'login', { arrivalEffect: 'sparks', trail: true });
+    expect(out).toContain('effect: sparks');
+    expect(out).toContain('trail: true');
+    parseOk(out);
+    // Editing an unrelated field must preserve both lines.
+    const doc2 = parseOk(out);
+    const out2 = updateFlow(out, doc2, 'login', { data: 'changed' });
+    expect(out2).toContain('effect: sparks');
+    expect(out2).toContain('trail: true');
+    // Clearing reverts to diagram defaults (lines dropped).
+    const doc3 = parseOk(out2);
+    const out3 = updateFlow(out2, doc3, 'login', { arrivalEffect: null, trail: null });
+    expect(out3).not.toContain('effect:');
+    expect(out3).not.toContain('trail:');
+    parseOk(out3);
+  });
+
   it('preserves leading indent for flows inside a @stage block', () => {
     const src = `@startuml
 component "A" as a

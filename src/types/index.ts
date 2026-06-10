@@ -7,8 +7,11 @@ export interface SourceLoc {
 
 /** What plays when a dot reaches its node. `dissolve` = ink-drop absorption,
  *  `outline` = the node border lights up from the hit point with a glow,
+ *  `ripple` = sonar rings expand from the hit point (contract on handoff),
+ *  `fill` = the box fills with liquid from the entry side then drains,
+ *  `sparks` = the dot shatters into sparks that scatter (and re-swarm),
  *  `none` = no effect (and no arrival delay). */
-export type ArrivalEffectKind = 'dissolve' | 'outline' | 'none';
+export type ArrivalEffectKind = 'dissolve' | 'outline' | 'ripple' | 'fill' | 'sparks' | 'none';
 
 /** A parsed flow diagram document */
 export interface FlowDocument {
@@ -24,6 +27,8 @@ export interface FlowDocument {
   settings?: {
     /** Default arrival effect for all flows (overridable per flow). */
     arrivalEffect?: ArrivalEffectKind;
+    /** Default comet-trail (line afterglow) toggle for all flows. */
+    trail?: boolean;
   };
 }
 
@@ -85,6 +90,8 @@ export interface FlowNode {
   hasRate?: boolean;
   /** Per-flow arrival effect override; unset → diagram default. */
   arrivalEffect?: ArrivalEffectKind;
+  /** Per-flow comet-trail override; unset → diagram default (off). */
+  trail?: boolean;
   loc?: SourceLoc;                    // byte offsets of the @flow block (header + properties)
 }
 

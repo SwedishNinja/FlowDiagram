@@ -165,8 +165,11 @@ auth -> gw as result_conn : auth result
   color: #FF0088             # hex color (also: named like "red", "blue", or "#abc")
   after: flow_a, flow_b      # dependencies — if present, this flow fires ONCE per
                              # upstream arrival (1:1, not continuously)
-  effect: outline            # arrival effect override: dissolve | outline | none
+  effect: outline            # arrival effect override: dissolve | outline |
+                             # ripple | fill | sparks | none
                              # (omit to use the diagram default)
+  trail: true                # comet trail: the line glows behind the dot and
+                             # cools down after arrival (omit for diagram default)
 ```
 
 ### Diagram-wide settings
@@ -175,7 +178,9 @@ Top-level property lines that set defaults for the whole diagram:
 
 ```
 arrival_effect: outline      # default arrival effect for every flow:
-                             # dissolve (default) | outline | none
+                             # dissolve (default) | outline | ripple | fill |
+                             # sparks | none
+trail: true                  # default comet trail for every flow (default off)
 ```
 
 ### Semantics
@@ -191,6 +196,14 @@ arrival_effect: outline      # default arrival effect for every flow:
 **Handoff re-condensation**: when the journey *continues* from that box — a flow with `after:` listing the arriving flow departs from the same node, or the next stage in an `after:` chain has a start flow leaving it — the plume doesn't fade away. It dissolves about halfway, then glides across the box and re-condenses at the point where the outgoing line departs, landing there exactly as the next flow's dot spawns: dot → dissolve → re-assemble → next dot, one continuous substance. If the continuing flow has a different color, the plume morphs into it mid-glide. A terminal arrival (nothing continues from that node) still fully dissolves.
 
 **Outline effect** (`effect: outline`): instead of the ink drop, the node's border lights up in the dot's color from the hit point, spreading around the outline both ways with a soft outer glow, then fading. With a handoff it spreads for the first half, then the lit segment slides around the border toward the departure point, shrinking to a spark and morphing into the next flow's color as the next dot spawns. `effect: none` disables the arrival effect for a flow entirely (and skips the ~1 s arrival delay).
+
+**Ripple effect** (`effect: ripple`): sonar rings expand from the hit point across the box and fade. With a handoff the second half plays in reverse — contracting rings converge on the departure point and condense into the next dot, morphing colors.
+
+**Liquid fill** (`effect: fill`): translucent color pours in from the entry side behind an animated wavy surface line, fills ~40% of the box, then evaporates. With a handoff the liquid band slides toward the departure point and drains out through it, morphing into the next flow's color.
+
+**Spark burst** (`effect: sparks`): the dot shatters into eight sparks that scatter into the box on curved trajectories and burn out. With a handoff they swarm back together at the departure point and recombine into the next dot, morphing colors. Trajectories are seeded per arrival, so exports are reproducible.
+
+**Comet trail** (`trail: true`, per flow or diagram-wide): the line glows behind the moving dot like a cooling comet tail and the wake fades out in place after the dot arrives. Composes with any arrival effect and never delays arrivals.
 
 ### @stage blocks (scenario grouping)
 

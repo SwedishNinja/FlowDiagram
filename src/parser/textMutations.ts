@@ -796,6 +796,7 @@ export function createFlow(
     startDelayMs?: number;
     after?: string[];
     arrivalEffect?: ArrivalEffectKind;
+    trail?: boolean;
     /** Target stage name, or null/undefined for root-level. */
     stage?: string | null;
   },
@@ -821,6 +822,8 @@ function buildFlowLines(opts: {
   after?: string[];
   /** Per-flow arrival effect override; omit for the diagram default. */
   arrivalEffect?: ArrivalEffectKind;
+  /** Per-flow comet-trail override; omit for the diagram default. */
+  trail?: boolean;
 }): string[] {
   const intervalMs = opts.intervalMs ?? 1000;
   const hasRate = opts.hasRate ?? true;
@@ -841,6 +844,7 @@ function buildFlowLines(opts: {
   if (opts.color) lines.push(`  color: #${opts.color.replace(/^#/, '')}`);
   if (after.length > 0) lines.push(`  after: ${after.join(', ')}`);
   if (opts.arrivalEffect) lines.push(`  effect: ${opts.arrivalEffect}`);
+  if (opts.trail !== undefined) lines.push(`  trail: ${opts.trail}`);
   return lines;
 }
 
@@ -1415,6 +1419,8 @@ export function updateFlow(
     after?: string[];
     /** Per-flow arrival effect; null clears the override (diagram default). */
     arrivalEffect?: ArrivalEffectKind | null;
+    /** Per-flow comet trail; null clears the override (diagram default). */
+    trail?: boolean | null;
   },
 ): string {
   const flow = doc.flows.find((f) => f.name === name);
@@ -1437,6 +1443,7 @@ export function updateFlow(
   const startDelayMs = updates.startDelayMs ?? flow.startDelayMs;
   const after = updates.after ?? flow.after;
   const arrivalEffect = 'arrivalEffect' in updates ? updates.arrivalEffect : flow.arrivalEffect;
+  const trail = 'trail' in updates ? updates.trail : flow.trail;
 
   // Capture indentation: text[loc.start..] begins with optional whitespace
   // that the grammar's leading `_` consumed. Re-prepend it on every line so
@@ -1457,6 +1464,7 @@ export function updateFlow(
   if (color) body.push(`  color: #${color.replace(/^#/, '')}`);
   if (after.length > 0) body.push(`  after: ${after.join(', ')}`);
   if (arrivalEffect) body.push(`  effect: ${arrivalEffect}`);
+  if (trail !== undefined && trail !== null) body.push(`  trail: ${trail}`);
 
   const block = body.map((l) => indent + l).join('\n') + '\n';
 

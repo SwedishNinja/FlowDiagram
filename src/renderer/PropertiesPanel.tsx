@@ -635,7 +635,21 @@ function FlowForm({ flow }: { flow: FlowNode }) {
           <option value="">(diagram default)</option>
           <option value="dissolve">Dissolve</option>
           <option value="outline">Outline glow</option>
+          <option value="ripple">Ripple</option>
+          <option value="fill">Liquid fill</option>
+          <option value="sparks">Spark burst</option>
           <option value="none">None</option>
+        </select>
+      </Field>
+      <Field label="Comet trail">
+        <select
+          value={flow.trail === undefined ? '' : String(flow.trail)}
+          onChange={(e) => commit({ trail: e.target.value === '' ? null : e.target.value === 'true' })}
+          style={selectStyle}
+        >
+          <option value="">(diagram default)</option>
+          <option value="true">On</option>
+          <option value="false">Off</option>
         </select>
       </Field>
       <Field label="Pace">

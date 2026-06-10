@@ -130,10 +130,15 @@ Entry
 DiagramSetting
   = _ "arrival_effect:" _ value:EffectKind _ NL
   { return { type: 'setting', key: 'arrivalEffect', value }; }
+  / _ "trail:" _ value:BoolValue _ NL
+  { return { type: 'setting', key: 'trail', value }; }
 
 EffectKind
   = "dissolve" { return 'dissolve'; }
   / "outline"  { return 'outline'; }
+  / "ripple"   { return 'ripple'; }
+  / "fill"     { return 'fill'; }
+  / "sparks"   { return 'sparks'; }
   / "none"     { return 'none'; }
 
 // --- Stage ---
@@ -337,6 +342,7 @@ FlowBlock
       else if (prop.key === 'color') result.color = prop.value;
       else if (prop.key === 'after') result.after = prop.value;
       else if (prop.key === 'effect') result.arrivalEffect = prop.value;
+      else if (prop.key === 'trail') result.trail = prop.value;
     }
     // Constant speed is the default model: unless the author wrote an
     // explicit traverse_time:, dots move at a uniform px/s pace.
@@ -366,6 +372,8 @@ FlowProperty
   { return { key: 'after', value }; }
   / _ "effect:" _ value:EffectKind _ NL
   { return { key: 'effect', value }; }
+  / _ "trail:" _ value:BoolValue _ NL
+  { return { key: 'trail', value }; }
   / _ Comment NL
   { return null; }
 

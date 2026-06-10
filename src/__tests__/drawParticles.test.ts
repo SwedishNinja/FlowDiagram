@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ParticleSystem } from '../renderer/particles';
-import { drawArrivalEffects } from '../renderer/drawParticles';
+import { drawArrivalEffects, drawParticles } from '../renderer/drawParticles';
 
 /** Minimal recording stand-in for CanvasRenderingContext2D — vitest has no
  *  real canvas, so we capture the call sequence and gradient color stops. */
@@ -40,11 +40,12 @@ function systemWithEffect(
   ageMs: number,
   handoffPoint?: { x: number; y: number },
   handoffColor?: string,
-  kind: 'dissolve' | 'outline' = 'dissolve',
+  kind: 'dissolve' | 'outline' | 'ripple' | 'fill' | 'sparks' = 'dissolve',
 ) {
   const ps = new ParticleSystem();
   ps.effects.push({
     kind,
+    seed: 1,
     nodeId: 'b',
     edgeId: 'c1',
     entry: { x: 100, y: 50 },
@@ -166,5 +167,94 @@ describe('drawArrivalEffects', () => {
     for (const stop of colorStops) {
       expect(stop.startsWith('#3b82f6')).toBe(true);
     }
+  });
+
+  it('ripple strokes clipped expanding rings mid-effect', () => {
+    const { ctx, calls, strokeStyles } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(400, undefined, undefined, 'ripple'), nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'clip')).toHaveLength(1);
+    expect(calls.filter(c => c === 'stroke').length).toBeGreaterThan(0);
+    for (const style of strokeStyles) {
+      expect(style).toMatch(/^#3b82f6[0-9a-f]{2}$/);
+    }
+  });
+
+  it('ripple handoff converges in the next flow color at the end', () => {
+    const { ctx, strokeStyles } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(999, { x: 220, y: 50 }, '#ef4444', 'ripple'), nodeLookup, edgeLookup);
+    expect(strokeStyles.length).toBeGreaterThan(0);
+    for (const style of strokeStyles) {
+      expect(style.startsWith('#ef4444')).toBe(true);
+    }
+  });
+
+  it('fill draws a clipped liquid band with a surface line', () => {
+    const { ctx, calls } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(400, undefined, undefined, 'fill'), nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'clip')).toHaveLength(1);
+    expect(calls.filter(c => c === 'fill')).toHaveLength(1);   // liquid body
+    expect(calls.filter(c => c === 'stroke')).toHaveLength(1); // wave surface
+  });
+
+  it('fill evaporates by the end of a terminal arrival', () => {
+    const { ctx, calls } = stubContext();
+    drawArrivalEffects(ctx, systemWithEffect(1000, undefined, undefined, 'fill'), nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'fill')).toHaveLength(0);
+  });
+
+  it('sparks scatter deterministically for the same seed', () => {
+    const run = () => {
+      const s = stubContext();
+      drawArrivalEffects(s.ctx, systemWithEffect(400, undefined, undefined, 'sparks'), nodeLookup, edgeLookup);
+      return s.calls.join(',');
+    };
+    const a = run();
+    const b = run();
+    expect(a).toBe(b);
+    expect(a.split('fill').length - 1).toBe(16); // 8 sparks × (glow + core)
+  });
+
+  it('sparks handoff recombines in the next flow color', () => {
+    const { ctx, calls } = stubContext();
+    const ps = systemWithEffect(999, { x: 220, y: 50 }, '#ef4444', 'sparks');
+    drawArrivalEffects(ctx, ps, nodeLookup, edgeLookup);
+    expect(calls.filter(c => c === 'fill').length).toBe(16);
+  });
+});
+
+describe('comet trail', () => {
+  function systemWithParticle(trail: boolean) {
+    const ps = new ParticleSystem();
+    ps.particles.push({
+      id: 1,
+      progress: 0.6,
+      speed: 0.001,
+      edgeId: 'c1',
+      flowName: 'f',
+      color: '#3b82f6',
+      reverse: false,
+      trail,
+    });
+    return ps;
+  }
+
+  it('draws a wake behind a trailed particle', () => {
+    const { ctx, calls } = stubContext();
+    drawParticles(ctx, systemWithParticle(true), edgeLookup, 1);
+    expect(calls.filter(c => c === 'stroke').length).toBeGreaterThan(0);
+  });
+
+  it('draws no wake when trail is off', () => {
+    const { ctx, calls } = stubContext();
+    drawParticles(ctx, systemWithParticle(false), edgeLookup, 1);
+    expect(calls.filter(c => c === 'stroke')).toHaveLength(0);
+  });
+
+  it('draws a cooling afterglow for trail glows', () => {
+    const ps = new ParticleSystem();
+    ps.trailGlows.push({ edgeId: 'c1', color: '#3b82f6', reverse: false, ageMs: 100, durationMs: 450 });
+    const { ctx, calls } = stubContext();
+    drawParticles(ctx, ps, edgeLookup, 1);
+    expect(calls.filter(c => c === 'stroke').length).toBeGreaterThan(0);
   });
 });

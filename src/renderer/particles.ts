@@ -13,14 +13,31 @@ export interface Particle {
   color: string;
   dataLabel?: string;
   reverse: boolean;
+  /** Comet trail: draw a fading wake along the edge behind this dot. */
+  trail: boolean;
+}
+
+/** Afterglow left on a line when a trailed dot arrives — the wake cools
+ *  down in place instead of vanishing with the particle. Purely visual;
+ *  never delays arrivals. */
+export interface TrailGlow {
+  edgeId: string;
+  color: string;
+  reverse: boolean;
+  ageMs: number;
+  durationMs: number;
 }
 
 /** An "ink drop" absorption playing inside a node after a particle hits it.
  *  While an effect is alive its arrival has NOT yet been registered — stage
  *  completion and `after:` deps wait until the drop fully dissolves. */
 export interface ArrivalEffect {
-  /** Which animation plays: ink-drop dissolve or border-glow outline. */
-  kind: 'dissolve' | 'outline';
+  /** Which animation plays (every kind except 'none', which never spawns). */
+  kind: 'dissolve' | 'outline' | 'ripple' | 'fill' | 'sparks';
+  /** Deterministic per-effect seed (monotonic counter). Lets the sparks
+   *  renderer derive stable pseudo-random trajectories — the GIF exporter
+   *  simulates twice and both passes must draw identical frames. */
+  seed: number;
   nodeId: string;
   edgeId: string;
   /** Diagram-space point where the particle entered the box. */
@@ -105,6 +122,18 @@ export class ParticleSystem {
   /** Diagram-wide default arrival effect (top-level `arrival_effect:`). */
   private defaultArrivalEffect: ArrivalEffectKind = 'dissolve';
 
+  /** Diagram-wide default comet-trail toggle (top-level `trail:`). */
+  private defaultTrail = false;
+
+  /** Live trail afterglows. Public so the renderer can draw them. */
+  trailGlows: TrailGlow[] = [];
+
+  private maxTrailGlows = 200;
+
+  /** Monotonic counter feeding ArrivalEffect.seed. Reset with the system so
+   *  repeated simulations of the same doc produce identical sequences. */
+  private nextEffectSeed = 0;
+
   /** Per-flow id of the particle currently carrying the data label. The
    *  renderer reads this and only repicks (latest spawn) when the prior
    *  holder is no longer alive. Public so drawParticles can mutate it. */
@@ -126,12 +155,15 @@ export class ParticleSystem {
     this.particles = [];
     this.emitters = [];
     this.effects = [];
+    this.trailGlows = [];
+    this.nextEffectSeed = 0;
     this.arrivalCounts.clear();
     this.stageStates.clear();
 
     const edgeMap = new Map(layout.edges.map(e => [e.id, e]));
     this.edgeById = edgeMap;
     this.defaultArrivalEffect = doc.settings?.arrivalEffect ?? 'dissolve';
+    this.defaultTrail = doc.settings?.trail ?? false;
 
     // Build stage states. A stage with no deps starts running immediately;
     // stages with deps start idle and wait for dep completions.
@@ -200,6 +232,7 @@ export class ParticleSystem {
       color: emitter.color,
       dataLabel: emitter.flow.data,
       reverse: isReverse,
+      trail: emitter.flow.trail ?? this.defaultTrail,
     });
   }
 
@@ -328,6 +361,7 @@ export class ParticleSystem {
     const handoff = this.findHandoff(p.flowName, nodeId);
     this.effects.push({
       kind,
+      seed: this.nextEffectSeed++,
       nodeId,
       edgeId: p.edgeId,
       entry: { ...entry },
@@ -344,7 +378,17 @@ export class ParticleSystem {
   update(deltaMs: number, speedMultiplier: number) {
     const dt = deltaMs * speedMultiplier;
 
-    // 0. Age absorption effects; a fully dissolved drop registers its
+    // 0a. Age trail afterglows (visual only — never gates anything).
+    if (this.trailGlows.length > 0) {
+      const live: TrailGlow[] = [];
+      for (const g of this.trailGlows) {
+        g.ageMs += dt;
+        if (g.ageMs < g.durationMs) live.push(g);
+      }
+      this.trailGlows = live;
+    }
+
+    // 0b. Age absorption effects; a fully dissolved drop registers its
     //    arrival, which is what lets the next stage/dependent flow proceed.
     if (this.effects.length > 0) {
       const liveEffects: ArrivalEffect[] = [];
@@ -366,6 +410,16 @@ export class ParticleSystem {
       p.progress += p.speed * dt;
       const arrived = p.reverse ? p.progress <= 0 : p.progress >= 1;
       if (arrived) {
+        // The wake cools down in place instead of vanishing with the dot.
+        if (p.trail && this.trailGlows.length < this.maxTrailGlows) {
+          this.trailGlows.push({
+            edgeId: p.edgeId,
+            color: p.color,
+            reverse: p.reverse,
+            ageMs: 0,
+            durationMs: 450,
+          });
+        }
         if (this.arrivalEffectMs > 0) {
           this.spawnArrivalEffect(p);
         } else {
@@ -523,6 +577,8 @@ export class ParticleSystem {
   reset() {
     this.particles = [];
     this.effects = [];
+    this.trailGlows = [];
+    this.nextEffectSeed = 0;
     this.arrivalCounts.clear();
     this.labelHolderIdByFlow.clear();
     this.nextParticleId = 0;

@@ -46,7 +46,7 @@ const flowdiagramParser: StreamParser<{ inFlow: boolean }> = {
 
     // Flow property keywords
     if (state.inFlow) {
-      if (stream.match('data:') || stream.match('freq:') || stream.match('every:') || stream.match('traverse_time:') || stream.match('speed:') || stream.match('start_delay:') || stream.match('direction:') || stream.match('color:') || stream.match('after:') || stream.match('effect:')) {
+      if (stream.match('data:') || stream.match('freq:') || stream.match('every:') || stream.match('traverse_time:') || stream.match('speed:') || stream.match('start_delay:') || stream.match('direction:') || stream.match('color:') || stream.match('after:') || stream.match('effect:') || stream.match('trail:')) {
         return 'propertyName';
       }
       if (stream.match('on')) {
@@ -55,7 +55,7 @@ const flowdiagramParser: StreamParser<{ inFlow: boolean }> = {
     }
 
     // Diagram-wide setting lines
-    if (stream.match('arrival_effect:')) {
+    if (stream.match('arrival_effect:') || stream.match('trail:')) {
       return 'propertyName';
     }
 
