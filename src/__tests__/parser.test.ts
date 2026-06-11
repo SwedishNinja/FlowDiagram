@@ -2,6 +2,22 @@ import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
 
 describe('parser', () => {
+  describe('document envelope', () => {
+    it('tolerates blank lines before @startuml and after @enduml', () => {
+      const input = `\n\n@startuml\ncomponent "A" as a\n@enduml\n\n\n`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.document.components).toHaveLength(1);
+    });
+
+    it('tolerates a CRLF envelope with trailing blank lines', () => {
+      const input = `\r\n@startuml\r\ncomponent "A" as a\r\n@enduml\r\n\r\n`;
+      const result = parse(input);
+      expect(result.ok).toBe(true);
+    });
+  });
+
   describe('components', () => {
     it('parses a basic component', () => {
       const input = `@startuml

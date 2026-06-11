@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useFlowStore } from '../store/flowStore';
+import { useFlowStore, getMutationContext } from '../store/flowStore';
 import {
   createFlow,
   createFlowChain,
@@ -139,7 +139,7 @@ function FlowCreateCard({ firstId, secondId }: { firstId: string; secondId: stri
   const create = () => {
     const trimmedName = name.trim();
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedName)) return;
-    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast: latestAst } = getMutationContext();
     if (!latestAst) return;
     // Collision check at submit time so the name field can show errors later.
     const taken = new Set<string>([
@@ -306,7 +306,7 @@ function RelayCreateCard({
   const create = () => {
     const trimmedPrefix = prefix.trim();
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedPrefix)) return;
-    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast: latestAst } = getMutationContext();
     if (!latestAst) return;
     const { text: updated, flowNames } = createFlowChain(sourceText, latestAst, {
       hops,
@@ -400,7 +400,7 @@ function WrapInPackageCard({ ids }: { ids: string[] }) {
     const trimmedId = packageId.trim();
     const trimmedName = displayName.trim();
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(trimmedId) || trimmedName === '') return;
-    const { sourceText, setSourceText, ast: latestAst } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast: latestAst } = getMutationContext();
     if (!latestAst) return;
     const taken = new Set<string>([
       ...latestAst.components.map((c) => c.id),

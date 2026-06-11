@@ -227,6 +227,17 @@ export class ParticleSystem {
         oneShotFired: false,
       });
     });
+
+    // Drop flows that produced no emitter (their connection has no edge in
+    // THIS layout — possible transiently when the async layout lags the doc)
+    // from stage accounting: they can never arrive, and counting them would
+    // keep the stage running forever, deadlocking every dependent stage.
+    const emitterFlowNames = new Set(this.emitters.map(e => e.flow.name));
+    for (const stage of this.stageStates.values()) {
+      for (const fn of [...stage.flowNames]) {
+        if (!emitterFlowNames.has(fn)) stage.flowNames.delete(fn);
+      }
+    }
   }
 
   /** Spawn a particle for the emitter. Returns false when the particle cap
@@ -461,10 +472,11 @@ export class ParticleSystem {
     this.particles = surviving;
 
     // 2. Running stages complete when every flow in them has at least one
-    //    arrival in the current run.
+    //    arrival in the current run. An EMPTY stage (no flows, or none with
+    //    a live edge) completes immediately — it acts as a pass-through so
+    //    dependents aren't deadlocked behind a stage that can never finish.
     for (const stage of this.stageStates.values()) {
       if (stage.status !== 'running') continue;
-      if (stage.flowNames.size === 0) continue;
       let allArrived = true;
       for (const fn of stage.flowNames) {
         if ((stage.runArrivals.get(fn) ?? 0) < 1) {

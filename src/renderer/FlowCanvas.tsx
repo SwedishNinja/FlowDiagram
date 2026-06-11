@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { useFlowStore } from '../store/flowStore';
+import { useFlowStore, getMutationContext } from '../store/flowStore';
 import { createAnimationLoop, type AnimationController, computeTransform, canvasToDiagram, computeCollapsedGroups } from './animationLoop';
 import { parse } from '../parser/parser';
 import {
@@ -7,6 +7,7 @@ import {
   zoomCompensation,
   getConnectionEndpoints,
   endpointHandleRadius,
+  computeEffectiveEdges,
 } from './drawGraph';
 import { recomputeEdgesForNodes } from '../layout/recomputeEdges';
 import { translateGroupSubtree, refitAncestorGroups } from '../layout/layoutEngine';
@@ -292,11 +293,15 @@ export default function FlowCanvas() {
     y: number,
     effectiveScale: number,
   ): { end: 'source' | 'target'; anchor: { x: number; y: number }; connId: string } | null => {
-    const { selectedIds, selectionKind, layout: current } = useFlowStore.getState();
+    const { selectedIds, selectionKind, layout: current, openPackages } = useFlowStore.getState();
     if (!current || selectionKind !== 'connection' || selectedIds.length !== 1) return null;
     const edge = current.edges.find((e) => e.id === selectedIds[0]);
     if (!edge) return null;
-    const ends = getConnectionEndpoints(edge.points);
+    // Hit-test the polyline the user SEES: closed packages reroute edges to
+    // straight border-to-border lines (and the handles are drawn there).
+    const eff = computeEffectiveEdges(current, computeCollapsedGroups(current, openPackages)).get(edge.id);
+    if (eff?.suppressed) return null;
+    const ends = getConnectionEndpoints(eff?.points ?? edge.points);
     if (!ends) return null;
     const zc = zoomCompensation(effectiveScale);
     const r = endpointHandleRadius(zc) * 1.6; // a bit looser than the visible dot
@@ -315,13 +320,19 @@ export default function FlowCanvas() {
    * to diagram coords via the current scale. Skips suppressed edges.
    */
   const findConnectionAt = useCallback((x: number, y: number, effectiveScale: number): string | null => {
-    const current = useFlowStore.getState().layout;
+    const { layout: current, openPackages } = useFlowStore.getState();
     if (!current) return null;
+    // Hit-test what's actually drawn: collapsed packages suppress internal
+    // edges (not clickable) and reroute boundary-crossing ones to straight
+    // fanned-out lines (clickable where they render, not on the old route).
+    const effective = computeEffectiveEdges(current, computeCollapsedGroups(current, openPackages));
     const tolerance = 6 / effectiveScale;
     let closestId: string | null = null;
     let closestDist = tolerance;
     for (const edge of current.edges) {
-      const pts = edge.points;
+      const eff = effective.get(edge.id);
+      if (eff?.suppressed) continue;
+      const pts = eff?.points ?? edge.points;
       for (let i = 0; i + 1 < pts.length; i++) {
         const d = distancePointToSegment(x, y, pts[i]!.x, pts[i]!.y, pts[i + 1]!.x, pts[i + 1]!.y);
         if (d < closestDist) {
@@ -513,8 +524,7 @@ export default function FlowCanvas() {
         // stacks packages vertically so their x-ranges fully overlap, meaning
         // almost every click lands "inside" some package even when the user
         // sees only empty canvas. Package assignment is done via the Inspector.
-        const ast = useFlowStore.getState().ast;
-        const sourceText = useFlowStore.getState().sourceText;
+        const { sourceText, ast } = getMutationContext();
         if (!ast) return;
         const id = generateUniqueComponentId(ast);
         const updated = createComponent(sourceText, ast, {
@@ -871,8 +881,7 @@ export default function FlowCanvas() {
       const draft = connectionDraftRef.current;
       connectionDraftRef.current = null;
       if (!draft || !draft.targetId) return;
-      const ast = useFlowStore.getState().ast;
-      const sourceText = useFlowStore.getState().sourceText;
+      const { sourceText, ast } = getMutationContext();
       if (!ast) return;
       const updated = appendConnection(sourceText, ast, draft.sourceId, draft.targetId);
       if (updated !== sourceText) useFlowStore.getState().setSourceText(updated);
@@ -883,8 +892,7 @@ export default function FlowCanvas() {
       const draft = rewireDraftRef.current;
       rewireDraftRef.current = null;
       if (!draft || !draft.targetId) return;
-      const ast = useFlowStore.getState().ast;
-      const sourceText = useFlowStore.getState().sourceText;
+      const { sourceText, ast } = getMutationContext();
       if (!ast) return;
       const updated = updateConnection(sourceText, ast, draft.connId, {
         [draft.end]: draft.targetId,
@@ -1022,7 +1030,7 @@ export default function FlowCanvas() {
    *  double-clicking the label edits what the user actually sees. */
   const commitRename = useCallback((nodeId: string, rawNewName: string) => {
     const newName = rawNewName.trim();
-    const ast = useFlowStore.getState().ast;
+    const { sourceText, ast } = getMutationContext();
     if (!ast) {
       setRenameOverlay(null);
       return;
@@ -1032,7 +1040,6 @@ export default function FlowCanvas() {
       setRenameOverlay(null);
       return;
     }
-    const sourceText = useFlowStore.getState().sourceText;
     const updated = updateComponent(sourceText, ast, nodeId, { displayName: newName });
     if (updated !== sourceText) {
       useFlowStore.getState().setSourceText(updated);
@@ -1069,8 +1076,8 @@ export default function FlowCanvas() {
       if (isEditableTarget(e.target)) return;
 
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
-      const { selectedIds, selectionKind, ast, sourceText, setSourceText, clearSelection } =
-        useFlowStore.getState();
+      const { selectedIds, selectionKind, clearSelection } = useFlowStore.getState();
+      const { sourceText, ast, setSourceText } = getMutationContext();
       if (selectedIds.length === 0 || !selectionKind || !ast) return;
       e.preventDefault();
       // For multi-select we re-parse between deletes so each cascade walks

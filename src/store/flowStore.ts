@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { FlowDocument, LayoutResult } from '../types';
-import type { ParseError } from '../parser/parser';
+import { parse, type ParseError } from '../parser/parser';
 
 export interface FlowStore {
   // Source text
@@ -74,6 +74,24 @@ export interface FlowStore {
    *  open. Persists across re-renders / tool-mode changes. */
   stagesPanelOpen: boolean;
   setStagesPanelOpen: (open: boolean) => void;
+}
+
+/**
+ * Coherent (text, document) pair for text mutations. The store's `ast` lags
+ * `sourceText` by the 300ms parse debounce, so splicing at its byte-offset
+ * `loc`s right after another edit can corrupt the document. This reparses
+ * the CURRENT text synchronously (the parser is fast enough to run inline);
+ * if the text is momentarily unparseable mid-edit, it falls back to the
+ * debounced ast — no worse than the old behavior.
+ */
+export function getMutationContext(): {
+  sourceText: string;
+  ast: FlowDocument | null;
+  setSourceText: (text: string) => void;
+} {
+  const { sourceText, ast, setSourceText } = useFlowStore.getState();
+  const result = parse(sourceText);
+  return { sourceText, ast: result.ok ? result.document : ast, setSourceText };
 }
 
 const STORAGE_KEY = 'flowdiagram-source';

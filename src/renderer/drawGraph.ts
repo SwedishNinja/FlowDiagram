@@ -1,4 +1,5 @@
 import type { LayoutResult, LayoutNode, LayoutEdge, LayoutGroup, Point } from '../types';
+import { normalizeColor } from './colorUtils';
 
 const COLORS = {
   nodeFill: '#ffffff',
@@ -148,8 +149,13 @@ function drawRoundedRect(
 
 function resolveColor(color?: string): string {
   if (!color) return COLORS.nodeFill;
-  if (/^[0-9a-fA-F]{3,8}$/.test(color)) return `#${color}`;
-  return color;
+  // 4/8-digit hex (with alpha): just ensure the leading #.
+  const bare = color.startsWith('#') ? color.slice(1) : color;
+  if (/^[0-9a-fA-F]{4}$/.test(bare) || /^[0-9a-fA-F]{8}$/.test(bare)) return `#${bare}`;
+  // Named colors and 3/6-digit hex normalize to #rrggbb so the tint/darken/
+  // contrast helpers (which need to decompose the color) work on them too.
+  // Unknown values pass through for the canvas to interpret.
+  return normalizeColor(color);
 }
 
 /** Size of the clickable collapse/expand toggle in diagram coords (pre-zoom-compensation). */
@@ -255,6 +261,10 @@ function drawGroup(ctx: CanvasRenderingContext2D, group: LayoutGroup, collapsed:
 /** Parse `#rrggbb` or `rrggbb` into an {r,g,b} triple, or null. */
 function parseHex(c: string): { r: number; g: number; b: number } | null {
   const m = c.replace(/^#/, '');
+  // Reject non-hex input (e.g. a CSS color name that happens to be 6 chars,
+  // like "tomato") — parseInt would yield NaN and the resulting
+  // rgba(NaN,…) string is silently ignored by canvas.
+  if (!/^[0-9a-fA-F]+$/.test(m)) return null;
   if (m.length === 3) {
     return {
       r: parseInt(m[0]! + m[0]!, 16),

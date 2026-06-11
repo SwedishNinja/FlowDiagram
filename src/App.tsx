@@ -671,7 +671,10 @@ export default function App() {
   }, [setSourceText]);
 
   useEffect(() => {
-    return useFlowStore.subscribe(
+    // Generation counter: ELK runs async, so a slow layout kicked off by an
+    // older edit can resolve AFTER a newer one and must not overwrite it.
+    let layoutGeneration = 0;
+    const unsubscribe = useFlowStore.subscribe(
       (s) => s.sourceText,
       (sourceText) => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -680,10 +683,13 @@ export default function App() {
           if (result.ok) {
             setParseResult(result.document, []);
             setIsLayouting(true);
+            const generation = ++layoutGeneration;
             try {
               const layout = await computeLayout(result.document);
+              if (generation !== layoutGeneration) return; // superseded
               setLayout(layout);
             } catch (e) {
+              if (generation !== layoutGeneration) return; // superseded
               // Don't fail silently: a layout-engine error means the canvas
               // would quietly keep showing a stale (or empty) diagram.
               setIsLayouting(false);
@@ -700,6 +706,10 @@ export default function App() {
       },
       { fireImmediately: true },
     );
+    return () => {
+      unsubscribe();
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [setParseResult, setLayout, setIsLayouting]);
 
   return (

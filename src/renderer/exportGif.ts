@@ -110,8 +110,12 @@ export async function exportGif(
   // Reserve palette index 255 as "transparent" so delta frames can mark
   // unchanged pixels transparent (the previous frame shows through) —
   // dramatically shrinks file size on animations with a static background.
+  // Quantize to 254 (not 255) so index 254 is always a black pad that can
+  // absorb any pixel applyPalette maps onto the padded region; pixels that
+  // land on 255 itself are remapped to 254 below — otherwise a genuinely
+  // CHANGED black pixel would decode as "unchanged" (transparent hole).
   const TRANSPARENT_INDEX = 255;
-  const globalPalette = quantize(sampleBuffer, 255, { format: 'rgb565' });
+  const globalPalette = quantize(sampleBuffer, 254, { format: 'rgb565' });
   while (globalPalette.length < 256) globalPalette.push([0, 0, 0]);
 
   // --- Encoding pass -----------------------------------------------------
@@ -126,6 +130,11 @@ export async function exportGif(
   for (let i = 0; i < totalFrames; i++) {
     const imageData = renderAt(particleSystem);
     const indexed = applyPalette(imageData.data, globalPalette);
+    // Keep the reserved transparency index out of real pixel data. Index 254
+    // holds an identical black pad, so this is visually lossless.
+    for (let p = 0; p < indexed.length; p++) {
+      if (indexed[p] === TRANSPARENT_INDEX) indexed[p] = TRANSPARENT_INDEX - 1;
+    }
 
     if (i === 0) {
       gif.writeFrame(indexed, width, height, {

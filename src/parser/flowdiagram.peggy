@@ -1,5 +1,5 @@
 Document
-  = _ "@startuml" _ NL body:Body _ "@enduml" _ NL? _
+  = (_ NL)* _ "@startuml" _ NL body:Body _ "@enduml" (_ NL)* _
   { return body; }
 
 Body

@@ -72,6 +72,25 @@ describe('renameComponent', () => {
     expect(doc2.components.find((c) => c.id === 'auth')).toBeFalsy();
   });
 
+  it('remaps the @positions entry so the renamed component keeps its pin', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@positions
+  a: 100, 200
+  b: 300, 400
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = renameComponent(src, doc, 'a', 'svc');
+    const doc2 = parseOk(out);
+    expect(doc2.positions['svc']).toEqual({ x: 100, y: 200 });
+    expect(doc2.positions['a']).toBeUndefined();
+    expect(doc2.positions['b']).toEqual({ x: 300, y: 400 });
+  });
+
   it('does not touch labels that mention the alias as a word', () => {
     const doc = parseOk(SAMPLE);
     const out = renameComponent(SAMPLE, doc, 'gw', 'gateway');
@@ -1741,6 +1760,41 @@ package "Old Name" as p1 {
     expect(out).toContain('component "A" as a');
     expect(out).toContain('component "B" as b');
     parseOk(out);
+  });
+
+  it('property edits target the OUTER package, not a nested one', () => {
+    const src = `@startuml
+package "Outer" as outer {
+  package "Inner" as inner {
+    open: true
+    component "A" as a
+  }
+}
+@enduml
+`;
+    const doc = parseOk(src);
+    // Setting open on outer must not rewrite inner's line.
+    const out = updateGroup(src, doc, 'outer', { defaultOpen: true });
+    const doc2 = parseOk(out);
+    expect(doc2.groups.find((g) => g.id === 'outer')!.defaultOpen).toBe(true);
+    expect(doc2.groups.find((g) => g.id === 'inner')!.defaultOpen).toBe(true);
+
+    // Clearing open on outer must be a no-op for inner (and for the text,
+    // since outer has no open: line of its own here).
+    const cleared = updateGroup(src, doc, 'outer', { defaultOpen: null });
+    const doc3 = parseOk(cleared);
+    expect(doc3.groups.find((g) => g.id === 'inner')!.defaultOpen).toBe(true);
+  });
+
+  it('sanitizes double quotes in display names (grammar has no escapes)', () => {
+    const src = `@startuml
+component "A" as a
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateComponent(src, doc, 'a', { displayName: 'say "hi" loud' });
+    const doc2 = parseOk(out); // must not corrupt the document
+    expect(doc2.components[0]!.displayName).toBe("say 'hi' loud");
   });
 
   it('adds and clears a color', () => {

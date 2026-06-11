@@ -221,6 +221,69 @@ a -> b as c1
   });
 });
 
+describe('stage completability', () => {
+  it('an empty stage completes immediately and unblocks dependents', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage prep
+@end_stage
+
+@stage go
+  after: prep
+  @flow ping on c1
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const { ps } = await setup(src);
+    stepFor(ps, 400);
+    const snap = ps.getStageSnapshot();
+    // Pre-fix `prep` stayed 'running' forever and `go` never started.
+    expect(snap.find(s => s.name === 'prep')!.completionCount).toBeGreaterThanOrEqual(1);
+    expect(snap.find(s => s.name === 'go')!.completionCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('a flow with no edge in the layout does not deadlock its stage', async () => {
+    // Simulate the doc/layout mismatch (async layout lagging the document):
+    // init with a layout computed from a doc that lacks connection c2.
+    const oldSrc = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+@enduml
+`;
+    const newSrc = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+b -> a as c2
+
+@stage s1
+  @flow live on c1
+    traverse_time: 100ms
+  @flow ghost on c2
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const oldParsed = parse(oldSrc);
+    const newParsed = parse(newSrc);
+    if (!oldParsed.ok || !newParsed.ok) throw new Error('fixture parse failed');
+    const layout = await computeLayout(oldParsed.document); // no c2 edge
+    const ps = new ParticleSystem();
+    ps.arrivalEffectMs = 0;
+    ps.init(newParsed.document, layout);
+
+    stepFor(ps, 400);
+    // `ghost` can never arrive; only `live` should gate the stage.
+    expect(ps.getStageSnapshot().find(s => s.name === 's1')!.completionCount)
+      .toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe('particle cap liveness', () => {
   it('a staged one-shot blocked by the particle cap retries instead of dying', async () => {
     const src = `@startuml

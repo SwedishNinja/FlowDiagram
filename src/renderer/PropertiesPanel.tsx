@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useFlowStore } from '../store/flowStore';
+import { useFlowStore, getMutationContext } from '../store/flowStore';
 import {
   createStage,
   deleteComponent,
@@ -185,7 +185,7 @@ function StagesSectionHeader() {
   const setSelection = useFlowStore((s) => s.setSelection);
 
   const create = () => {
-    const { sourceText, setSourceText, ast: doc } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast: doc } = getMutationContext();
     if (!doc) return;
     const name = generateUniqueStageName(doc);
     const updated = createStage(sourceText, doc, { name });
@@ -323,7 +323,7 @@ function ComponentForm({ comp }: { comp: ComponentNode }) {
   const clearSelection = useFlowStore((s) => s.clearSelection);
 
   const commit = (updates: Parameters<typeof updateComponent>[3]) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateComponent(sourceText, ast, comp.id, updates);
     if (next !== sourceText) setSourceText(next);
@@ -332,7 +332,7 @@ function ComponentForm({ comp }: { comp: ComponentNode }) {
   const commitRename = (raw: string) => {
     const newId = raw.trim();
     if (newId === comp.id || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const taken = new Set([...ast.components.map((c) => c.id), ...ast.groups.map((g) => g.id), ...ast.connections.map((c) => c.id), ...ast.flows.map((f) => f.name)]);
     taken.delete(comp.id);
@@ -342,7 +342,7 @@ function ComponentForm({ comp }: { comp: ComponentNode }) {
   };
 
   const cascadeDelete = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = deleteComponent(sourceText, ast, comp.id);
     if (next !== sourceText) setSourceText(next);
@@ -431,7 +431,7 @@ function PackageSelect({ comp }: { comp: ComponentNode }) {
         value={comp.parentGroup ?? ''}
         onChange={(e) => {
           const targetId = e.target.value === '' ? null : e.target.value;
-          const { sourceText, setSourceText, ast } = useFlowStore.getState();
+          const { sourceText, setSourceText, ast } = getMutationContext();
           if (!ast) return;
           const updated = moveComponent(sourceText, ast, comp.id, targetId);
           if (updated !== sourceText) { setSourceText(updated); setSelection(comp.id, 'component'); }
@@ -454,7 +454,7 @@ function ConnectionForm({ conn }: { conn: ConnectionNode }) {
   const clearSelection = useFlowStore((s) => s.clearSelection);
 
   const commit = (updates: Parameters<typeof updateConnection>[3]) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateConnection(sourceText, ast, conn.id, updates);
     if (next !== sourceText) setSourceText(next);
@@ -463,7 +463,7 @@ function ConnectionForm({ conn }: { conn: ConnectionNode }) {
   const commitRename = (raw: string) => {
     const newId = raw.trim();
     if (newId === conn.id || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const taken = new Set([...ast.components.map((c) => c.id), ...ast.groups.map((g) => g.id), ...ast.connections.map((c) => c.id), ...ast.flows.map((f) => f.name)]);
     taken.delete(conn.id);
@@ -473,7 +473,7 @@ function ConnectionForm({ conn }: { conn: ConnectionNode }) {
   };
 
   const cascadeDelete = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = deleteConnection(sourceText, ast, conn.id);
     if (next !== sourceText) setSourceText(next);
@@ -539,7 +539,7 @@ function FlowForm({ flow }: { flow: FlowNode }) {
   const conn = conns.find((c) => c.id === flow.connection);
 
   const commit = (updates: Parameters<typeof updateFlow>[3]) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateFlow(sourceText, ast, flow.name, updates);
     if (next !== sourceText) setSourceText(next);
@@ -548,7 +548,7 @@ function FlowForm({ flow }: { flow: FlowNode }) {
   const commitRename = (rawNew: string) => {
     const newName = rawNew.trim();
     if (newName === flow.name || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newName)) return;
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const taken = new Set([...ast.components.map((c) => c.id), ...ast.groups.map((g) => g.id), ...ast.connections.map((c) => c.id), ...ast.flows.map((f) => f.name)]);
     taken.delete(flow.name);
@@ -558,7 +558,7 @@ function FlowForm({ flow }: { flow: FlowNode }) {
   };
 
   const deleteThis = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = deleteFlow(sourceText, ast, flow.name);
     if (next !== sourceText) setSourceText(next);
@@ -600,7 +600,7 @@ function FlowForm({ flow }: { flow: FlowNode }) {
           value={flow.stage ?? ''}
           onChange={(e) => {
             const targetName = e.target.value === '' ? null : e.target.value;
-            const { sourceText, setSourceText, ast } = useFlowStore.getState();
+            const { sourceText, setSourceText, ast } = getMutationContext();
             if (!ast) return;
             const updated = moveFlowToStage(sourceText, ast, flow.name, targetName);
             if (updated !== sourceText) { setSourceText(updated); setSelection(flow.name, 'flow'); }
@@ -694,7 +694,7 @@ function GroupForm({ group }: { group: GroupNode }) {
   const clearSelection = useFlowStore((s) => s.clearSelection);
 
   const commit = (updates: Parameters<typeof updateGroup>[3]) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateGroup(sourceText, ast, group.id, updates);
     if (next !== sourceText) setSourceText(next);
@@ -703,7 +703,7 @@ function GroupForm({ group }: { group: GroupNode }) {
   const commitRename = (raw: string) => {
     const newId = raw.trim();
     if (newId === group.id || !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(newId)) return;
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const taken = new Set([...ast.components.map((c) => c.id), ...ast.groups.map((g) => g.id), ...ast.connections.map((c) => c.id), ...ast.flows.map((f) => f.name)]);
     taken.delete(group.id);
@@ -713,7 +713,7 @@ function GroupForm({ group }: { group: GroupNode }) {
   };
 
   const ungroup = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = ungroupPackage(sourceText, ast, group.id);
     if (next !== sourceText) setSourceText(next);
@@ -721,7 +721,7 @@ function GroupForm({ group }: { group: GroupNode }) {
   };
 
   const cascadeDelete = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = deleteGroup(sourceText, ast, group.id);
     if (next !== sourceText) setSourceText(next);
@@ -768,7 +768,7 @@ function StageForm({ stage }: { stage: StageNode }) {
   const [showAddFlow, setShowAddFlow] = useState(false);
 
   const commit = (updates: { after?: string[] | null; repeat?: boolean }) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateStage(sourceText, ast, stage.name, updates);
     if (next !== sourceText) setSourceText(next);
@@ -779,14 +779,14 @@ function StageForm({ stage }: { stage: StageNode }) {
     const newOrder = [...stage.flowNames];
     const [moved] = newOrder.splice(from, 1);
     newOrder.splice(to, 0, moved!);
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = reorderFlowsInStage(sourceText, ast, stage.name, newOrder);
     if (next !== sourceText) setSourceText(next);
   };
 
   const addFlow = (flowName: string) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = moveFlowToStage(sourceText, ast, flowName, stage.name);
     if (next !== sourceText) setSourceText(next);
@@ -794,7 +794,7 @@ function StageForm({ stage }: { stage: StageNode }) {
   };
 
   const removeFlow = (flowName: string) => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = moveFlowToStage(sourceText, ast, flowName, null);
     if (next !== sourceText) setSourceText(next);
@@ -805,7 +805,7 @@ function StageForm({ stage }: { stage: StageNode }) {
   const unassignedFlows = allFlows.filter((f) => !f.stage);
 
   const cascadeDelete = () => {
-    const { sourceText, setSourceText, ast } = useFlowStore.getState();
+    const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = deleteStage(sourceText, ast, stage.name);
     if (next !== sourceText) setSourceText(next);

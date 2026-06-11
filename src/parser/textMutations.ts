@@ -553,6 +553,14 @@ export function moveFlowToStage(
  *
  * Components without a source loc (e.g. synthetic) are silently skipped.
  */
+/** The DSL's quoted strings have no escape syntax ("..." matches [^"]*), so
+ *  a literal double quote in a UI-supplied display name or data label would
+ *  terminate the string early and corrupt the document. Swap for single
+ *  quotes — closest safe substitute. */
+function sanitizeQuoted(value: string): string {
+  return value.replace(/"/g, "'");
+}
+
 export function wrapInPackage(
   text: string,
   doc: FlowDocument,
@@ -572,7 +580,7 @@ export function wrapInPackage(
 
   const memberLines = sorted.map((c) => '  ' + text.slice(c.loc.start, c.loc.end).trim());
   const block =
-    [`package "${displayName}" as ${packageId} {`, ...memberLines, `}`].join('\n') + '\n';
+    [`package "${sanitizeQuoted(displayName)}" as ${packageId} {`, ...memberLines, `}`].join('\n') + '\n';
 
   // Walk the source once, slicing in unmodified spans and replacing the first
   // wrapped component's line with the new block; subsequent wrapped lines
@@ -834,7 +842,7 @@ function buildFlowLines(opts: {
   const after = opts.after ?? [];
 
   const lines: string[] = [`@flow ${opts.name} on ${opts.connection}`];
-  if (opts.data) lines.push(`  data: "${opts.data}"`);
+  if (opts.data) lines.push(`  data: "${sanitizeQuoted(opts.data)}"`);
   if (hasRate) lines.push(`  every: ${Math.round(intervalMs)}ms`);
   if (opts.traverseTimeMs !== undefined && opts.speedPxPerSec === undefined) {
     lines.push(`  traverse_time: ${Math.round(opts.traverseTimeMs)}ms`);
@@ -981,7 +989,7 @@ export function createComponent(
     parentGroupId?: string;
   },
 ): string {
-  const line = `component "${opts.displayName}" as ${opts.id}`;
+  const line = `component "${sanitizeQuoted(opts.displayName)}" as ${opts.id}`;
 
   let withComponent: string;
   const parentGroup = opts.parentGroupId
@@ -1158,7 +1166,7 @@ export function updateComponent(
   const color = 'color' in updates ? updates.color : comp.color;
   const stereotype = 'stereotype' in updates ? updates.stereotype : comp.stereotype;
 
-  let line = `component "${displayName}" as ${id}`;
+  let line = `component "${sanitizeQuoted(displayName)}" as ${id}`;
   if (color) line += ` #${color.replace(/^#/, '')}`;
   if (stereotype) line += ` <<${stereotype}>>`;
 
@@ -1311,7 +1319,7 @@ export function updateGroup(
   }
   const indent = text.slice(group.loc.start, indentEnd);
   const colorPart = color ? ` #${color.replace(/^#/, '')}` : '';
-  const newHeader = `${indent}package "${displayName}" as ${id}${colorPart} {`;
+  const newHeader = `${indent}package "${sanitizeQuoted(displayName)}" as ${id}${colorPart} {`;
   let next = text.slice(0, group.loc.start) + newHeader + text.slice(braceIdx + 1);
 
   // collapseAtPx side-effects. Recompute the (possibly shifted) loc by
@@ -1331,6 +1339,35 @@ export function updateGroup(
   return next;
 }
 
+/** Find a `key:` property line in the group's OWN body — nested package
+ *  bodies are skipped via brace-depth tracking, so editing an outer
+ *  package's `open:`/`collapse_at:` can't hit an inner package's line.
+ *  Returns absolute [start, end) of the full line incl. its newline. */
+function findOwnPropertyLine(
+  text: string,
+  groupStart: number,
+  groupEnd: number,
+  key: string,
+): { start: number; end: number } | null {
+  const headerNewline = text.indexOf('\n', groupStart);
+  if (headerNewline === -1 || headerNewline > groupEnd) return null;
+  const re = new RegExp(`^[ \\t]*${key}:`);
+  let i = headerNewline + 1;
+  let depth = 0;
+  while (i < groupEnd) {
+    let lineEnd = text.indexOf('\n', i);
+    if (lineEnd === -1 || lineEnd >= groupEnd) lineEnd = groupEnd - 1;
+    const line = text.slice(i, lineEnd + 1);
+    if (depth === 0 && re.test(line)) return { start: i, end: lineEnd + 1 };
+    for (const ch of line) {
+      if (ch === '{') depth++;
+      else if (ch === '}') depth = Math.max(0, depth - 1);
+    }
+    i = lineEnd + 1;
+  }
+  return null;
+}
+
 /** Replace, insert, or remove a boolean property line (e.g. `open: true`)
  *  inside a package body. null removes the line. */
 function applyPackageBoolLine(
@@ -1342,16 +1379,12 @@ function applyPackageBoolLine(
   value: boolean | null,
 ): string {
   const bodyIndent = outerIndent + '  ';
-  const slice = text.slice(groupStart, groupEnd);
-  const re = new RegExp(`^[ \\t]*${key}:\\s*[^\\n]*\\n`, 'm');
-  const m = slice.match(re);
-  if (m && m.index !== undefined) {
-    const lineStart = groupStart + m.index;
-    const lineEnd = lineStart + m[0]!.length;
+  const found = findOwnPropertyLine(text, groupStart, groupEnd, key);
+  if (found) {
     if (value === null) {
-      return text.slice(0, lineStart) + text.slice(lineEnd);
+      return text.slice(0, found.start) + text.slice(found.end);
     }
-    return text.slice(0, lineStart) + `${bodyIndent}${key}: ${value}\n` + text.slice(lineEnd);
+    return text.slice(0, found.start) + `${bodyIndent}${key}: ${value}\n` + text.slice(found.end);
   }
   if (value === null) return text;
   const headerNewline = text.indexOf('\n', groupStart);
@@ -1370,16 +1403,12 @@ function applyCollapseAtPx(
   value: number | null,
 ): string {
   const bodyIndent = outerIndent + '  ';
-  // Scan inside the group for the existing collapse_at line.
-  const slice = text.slice(groupStart, groupEnd);
-  const m = slice.match(/^[ \t]*collapse_at:\s*[^\n]*\n/m);
-  if (m && m.index !== undefined) {
-    const lineStart = groupStart + m.index;
-    const lineEnd = lineStart + m[0]!.length;
+  const found = findOwnPropertyLine(text, groupStart, groupEnd, 'collapse_at');
+  if (found) {
     if (value === null) {
-      return text.slice(0, lineStart) + text.slice(lineEnd);
+      return text.slice(0, found.start) + text.slice(found.end);
     }
-    return text.slice(0, lineStart) + `${bodyIndent}collapse_at: ${Math.round(value)}px\n` + text.slice(lineEnd);
+    return text.slice(0, found.start) + `${bodyIndent}collapse_at: ${Math.round(value)}px\n` + text.slice(found.end);
   }
   if (value === null) return text;
   // Insert immediately after the opening `{`'s newline.
@@ -1495,7 +1524,7 @@ export function updateFlow(
   const indent = text.slice(flow.loc.start, indentEnd);
 
   const body: string[] = [`@flow ${name} on ${flow.connection}`];
-  if (data) body.push(`  data: "${data}"`);
+  if (data) body.push(`  data: "${sanitizeQuoted(data)}"`);
   if (hasRate) body.push(`  every: ${Math.round(intervalMs)}ms`);
   if (speedPxPerSec != null) body.push(`  speed: ${Math.round(speedPxPerSec)}`);
   else body.push(`  traverse_time: ${Math.round(traverseTimeMs)}ms`);
@@ -1748,5 +1777,17 @@ export function renameComponent(
     });
   }
 
-  return applyEdits(text, edits);
+  let next = applyEdits(text, edits);
+
+  // Remap the @positions entry so the renamed component keeps its pin
+  // (mirrors renameGroup) — otherwise the layout reverts to ELK auto-
+  // placement and a stale orphan entry lingers in the file.
+  if (oldId in doc.positions) {
+    const newPositions: Record<string, { x: number; y: number }> = { ...doc.positions };
+    newPositions[newId] = newPositions[oldId]!;
+    delete newPositions[oldId];
+    next = updatePositionsInSource(next, newPositions);
+  }
+
+  return next;
 }
