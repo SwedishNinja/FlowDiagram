@@ -1,0 +1,99 @@
+@startuml
+' FlowDiagram's own architecture: how a keystroke becomes pixels.
+' Generated with the code-to-flowdiagram skill.
+
+package "Electron Shell" as shell {
+  open: true
+  component "Main Process" as main_proc <<node>>
+  component "Preload Bridge" as bridge <<ipc>>
+}
+
+package "Renderer" as renderer {
+  open: true
+
+  component "CodeMirror Editor" as editor <<ui>>
+  component "Zustand Store" as store <<state>>
+
+  package "Parsing" as parsing {
+    component "Peggy Parser" as parser
+    component "Text Mutations" as mutations
+  }
+
+  package "Pipeline" as pipeline {
+    component "ELK Layout" as elk
+    component "Particle Engine" as engine
+    component "Graph Renderer" as draw
+  }
+
+  component "Canvas" as canvas <<ui>>
+
+  package "Exporters" as exporters {
+    component "GIF / WebM / HTML" as export_mods
+  }
+}
+
+main_proc -> bridge as ipc_read : file:read
+bridge -> store as deliver : file content
+editor -> store as edits : source text
+store -> parser as parse_conn : parse
+parser -> store as ast_back : AST
+store -> elk as layout_conn : document
+elk -> draw as geometry : layout
+store -> engine as engine_init : doc + layout
+engine -> canvas as frames : particles
+draw -> canvas as paint : graph
+canvas -> mutations as gestures : visual edits
+mutations -> store as splice : updated source
+store -> export_mods as export_conn : doc + layout
+export_mods ..> main_proc as save_dialog : save file
+
+@stage open_file
+  @flow read_from_disk on ipc_read
+    data: "diagram.flow"
+  @flow into_store on deliver
+    after: read_from_disk
+
+@end_stage
+
+@stage parse_pass
+  after: open_file
+  @flow source_in on parse_conn
+    data: "source text"
+  @flow ast_out on ast_back
+    after: source_in
+    data: "AST"
+@end_stage
+
+@stage layout_pass
+  after: parse_pass
+  @flow doc_to_elk on layout_conn
+  @flow geometry_out on geometry
+    after: doc_to_elk
+    data: "positions"
+@end_stage
+
+@stage render_loop
+  after: layout_pass
+  repeat: true
+  @flow init_particles on engine_init
+  @flow draw_graph on paint
+    after: init_particles
+  @flow animate on frames
+    after: init_particles
+@end_stage
+
+@stage edit_cycle
+  after: layout_pass
+  repeat: true
+  @flow user_gesture on gestures
+    data: "drag / rename"
+  @flow splice_source on splice
+    after: user_gesture
+  @flow reparse on parse_conn
+    after: splice_source
+@end_stage
+
+@flow typing on edits
+  data: "keystrokes"
+  every: 4s
+@enduml
