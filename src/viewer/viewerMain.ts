@@ -230,7 +230,11 @@ export function init(payload: ViewerPayload) {
     const d = canvasToDiagram(cx, cy, t);
     const fitScale = t.scale / zoom;
 
-    zoom = Math.max(0.2, Math.min(6, zoom * Math.exp(-e.deltaY * 0.0012)));
+    // fitView can legitimately land below 0.2 on spread-out content; clamp
+    // to the current zoom in that case so the first wheel tick zooms
+    // smoothly instead of snapping up to 0.2.
+    const minZoom = Math.min(0.2, zoom);
+    zoom = Math.max(minZoom, Math.min(6, zoom * Math.exp(-e.deltaY * 0.0012)));
     const newScale = fitScale * zoom;
     pan = {
       x: cx - d.x * newScale - (rect.width - layout.width * newScale) / 2,

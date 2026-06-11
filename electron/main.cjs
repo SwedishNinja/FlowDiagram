@@ -31,22 +31,37 @@ function loadRecentFiles() {
   }
 }
 
-async function saveRecentFiles() {
-  try {
-    await fs.writeFile(recentFilesStorePath(), JSON.stringify(recentFiles, null, 2), 'utf-8');
-  } catch {
-    // Non-fatal: recents just won't survive this session.
-  }
+// Windows paths are case-insensitive and may mix separators; compare
+// normalized (and case-folded on win32) so the same file can't appear twice.
+function sameFilePath(a, b) {
+  const na = path.normalize(a);
+  const nb = path.normalize(b);
+  return process.platform === 'win32'
+    ? na.toLowerCase() === nb.toLowerCase()
+    : na === nb;
+}
+
+// Chain writes so two rapid mutations (open + save-as) can't race and
+// persist a stale list.
+let recentWriteChain = Promise.resolve();
+function saveRecentFiles() {
+  const snapshot = JSON.stringify(recentFiles, null, 2);
+  recentWriteChain = recentWriteChain
+    .then(() => fs.writeFile(recentFilesStorePath(), snapshot, 'utf-8'))
+    .catch(() => {
+      // Non-fatal: recents just won't survive this session.
+    });
+  return recentWriteChain;
 }
 
 function addRecentFile(filePath) {
-  recentFiles = [filePath, ...recentFiles.filter((p) => p !== filePath)].slice(0, MAX_RECENT_FILES);
+  recentFiles = [filePath, ...recentFiles.filter((p) => !sameFilePath(p, filePath))].slice(0, MAX_RECENT_FILES);
   saveRecentFiles();
   buildMenu();
 }
 
 function removeRecentFile(filePath) {
-  recentFiles = recentFiles.filter((p) => p !== filePath);
+  recentFiles = recentFiles.filter((p) => !sameFilePath(p, filePath));
   saveRecentFiles();
   buildMenu();
 }
@@ -103,6 +118,9 @@ async function openRecentFile(filePath) {
 // whether to prompt — and has the latest content on hand to write if asked.
 let appDirtyState = { isDirty: false, latestContent: '' };
 
+// Monotonic token matching dirty-state queries to their replies.
+let dirtyQueryToken = 0;
+
 function updateWindowTitle() {
   if (!mainWindow) return;
   const suffix = currentFilePath ? ` — ${path.basename(currentFilePath)}` : ' — Untitled';
@@ -128,12 +146,51 @@ function createWindow() {
 
   // Guard unsaved work on quit. Intercept the window close; if there are
   // unsaved changes, prompt Save / Don't Save / Cancel before letting it go.
+  // The pushed dirty-state can lag the OS close event by a few ms (a first
+  // keystroke followed immediately by a close), so we always defer the
+  // decision and ask the renderer for its CURRENT state first, falling back
+  // to the last pushed state if it doesn't answer quickly.
   let allowClose = false;
+  let closeDecisionPending = false;
   mainWindow.on('close', (e) => {
-    if (allowClose || !appDirtyState.isDirty) return;
+    if (allowClose) return;
     e.preventDefault();
-    promptSaveThenClose();
+    if (closeDecisionPending) return;
+    closeDecisionPending = true;
+    decideClose().finally(() => {
+      closeDecisionPending = false;
+    });
   });
+
+  async function decideClose() {
+    const fresh = await queryRendererDirtyState();
+    if (fresh) appDirtyState = fresh;
+    if (!appDirtyState.isDirty) {
+      allowClose = true;
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+      return;
+    }
+    await promptSaveThenClose();
+  }
+
+  function queryRendererDirtyState() {
+    return new Promise((resolve) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return resolve(null);
+      const token = ++dirtyQueryToken;
+      const onReply = (_event, payload) => {
+        if (!payload || payload.token !== token) return;
+        clearTimeout(timer);
+        ipcMain.removeListener('app:dirty-state-reply', onReply);
+        resolve({ isDirty: !!payload.isDirty, latestContent: payload.content || '' });
+      };
+      const timer = setTimeout(() => {
+        ipcMain.removeListener('app:dirty-state-reply', onReply);
+        resolve(null); // renderer busy/gone — use the last pushed state
+      }, 250);
+      ipcMain.on('app:dirty-state-reply', onReply);
+      mainWindow.webContents.send('app:query-dirty-state', token);
+    });
+  }
 
   async function promptSaveThenClose() {
     if (!mainWindow) return;
@@ -297,6 +354,9 @@ ipcMain.handle('file:export-gif', async (_event, data) => {
 
 function buildMenu() {
   const template = [
+    // On macOS the first menu becomes the application menu; without this the
+    // File items land under the app name and standard shortcuts misbehave.
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     {
       label: 'File',
       submenu: [

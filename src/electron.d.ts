@@ -12,6 +12,8 @@ declare global {
       getStartupFile: () => Promise<{ path: string | null; cleanExit: boolean }>;
       exportGif: (data: Uint8Array) => Promise<{ path: string } | null>;
       setDirtyState: (isDirty: boolean, content: string) => void;
+      onQueryDirtyState: (cb: (token: number) => void) => () => void;
+      replyDirtyState: (token: number, isDirty: boolean, content: string) => void;
       listDir: (path?: string) => Promise<{ dir: string; files: { name: string; path: string }[] }>;
       pickDir: () => Promise<string | null>;
       onMenuNew: (cb: () => void) => () => void;

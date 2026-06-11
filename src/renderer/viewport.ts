@@ -9,10 +9,15 @@ export function computeViewportTransform(
   viewport: { x: number; y: number; width: number; height: number },
   padding: number = 30,
 ): { scale: number; offsetX: number; offsetY: number } {
-  const scaleX = (canvasW - padding * 2) / viewport.width;
-  const scaleY = (canvasH - padding * 2) / viewport.height;
-  const scale = Math.min(scaleX, scaleY);
-  const offsetX = (canvasW - viewport.width * scale) / 2 - viewport.x * scale;
-  const offsetY = (canvasH - viewport.height * scale) / 2 - viewport.y * scale;
+  // Clamp degenerate inputs: a zero-size viewport rect yields an Infinity
+  // scale (and NaN offsets), and a canvas smaller than the padding yields a
+  // negative, mirroring scale — both poison the export transform downstream.
+  const vw = Math.max(viewport.width, 1);
+  const vh = Math.max(viewport.height, 1);
+  const availW = Math.max(canvasW - padding * 2, 1);
+  const availH = Math.max(canvasH - padding * 2, 1);
+  const scale = Math.min(availW / vw, availH / vh);
+  const offsetX = (canvasW - vw * scale) / 2 - viewport.x * scale;
+  const offsetY = (canvasH - vh * scale) / 2 - viewport.y * scale;
   return { scale, offsetX, offsetY };
 }

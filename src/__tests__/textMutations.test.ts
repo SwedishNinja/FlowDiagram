@@ -980,6 +980,35 @@ a -> b as ab
     expect(out).toMatch(/@flow ping on ab\n\s+every: 1s/);
     parseOk(out);
   });
+
+  it('toggles repeat even when the line sits AFTER a flow block', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow ping on ab
+    every: 1s
+  repeat: true
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    expect(doc.stages[0]!.repeat).toBe(true);
+
+    // Turning repeat OFF must remove the late line (it used to survive).
+    const off = updateStage(src, doc, 'warmup', { repeat: false });
+    const docOff = parseOk(off);
+    expect(docOff.stages[0]!.repeat).toBe(false);
+    expect(off).not.toContain('repeat:');
+
+    // Re-affirming repeat ON must not leave a duplicate line behind.
+    const on = updateStage(src, doc, 'warmup', { repeat: true });
+    const docOn = parseOk(on);
+    expect(docOn.stages[0]!.repeat).toBe(true);
+    expect(on.match(/repeat:/g)!.length).toBe(1);
+  });
 });
 
 describe('deleteStage', () => {

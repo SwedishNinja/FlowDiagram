@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { computeLayout } from '../layout/layoutEngine';
 import { computeEffectiveEdges } from '../renderer/drawGraph';
 import { pointOnRectBorder } from '../layout/geometry';
+import { computeViewportTransform } from '../renderer/viewport';
 import { parse } from '../parser/parser';
 
 function parseDoc(input: string) {
@@ -61,6 +62,18 @@ a -> b as c1
     const loop = effective.get('loop')!;
     expect(loop.suppressed).toBe(false);
     expect(loop.points.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('computeViewportTransform stays finite for degenerate inputs', () => {
+    // Point-sized viewport rect.
+    const t1 = computeViewportTransform(800, 600, { x: 10, y: 10, width: 0, height: 0 });
+    expect(Number.isFinite(t1.scale)).toBe(true);
+    expect(Number.isFinite(t1.offsetX)).toBe(true);
+    expect(Number.isFinite(t1.offsetY)).toBe(true);
+    expect(t1.scale).toBeGreaterThan(0);
+    // Canvas smaller than the padding must not produce a mirroring scale.
+    const t2 = computeViewportTransform(20, 20, { x: 0, y: 0, width: 100, height: 100 });
+    expect(t2.scale).toBeGreaterThan(0);
   });
 
   it('pointOnRectBorder lands on the border even for near-aligned centers', () => {

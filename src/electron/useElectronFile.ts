@@ -117,13 +117,23 @@ export function useElectronFile(): ElectronFileState {
 
   // Report dirty state on mount and whenever the document text changes, so the
   // main process always knows whether to prompt before the window closes.
+  // Also answer main's close-time query for the CURRENT state — the pushed
+  // updates can race the OS close event.
   useEffect(() => {
     if (!window.electronAPI) return;
     if (lastSavedRef.current === null) {
       lastSavedRef.current = useFlowStore.getState().sourceText;
     }
     reportDirty();
-    return useFlowStore.subscribe((s) => s.sourceText, reportDirty);
+    const unsubText = useFlowStore.subscribe((s) => s.sourceText, reportDirty);
+    const unsubQuery = window.electronAPI.onQueryDirtyState?.((token) => {
+      const text = useFlowStore.getState().sourceText;
+      window.electronAPI?.replyDirtyState(token, text !== lastSavedRef.current, text);
+    });
+    return () => {
+      unsubText();
+      unsubQuery?.();
+    };
   }, [reportDirty]);
 
   // Wire up menu events from Electron main process

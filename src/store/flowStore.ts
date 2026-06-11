@@ -69,11 +69,6 @@ export interface FlowStore {
    *  'add-component' makes clicks on empty area create a new component. */
   toolMode: 'select' | 'add-component';
   setToolMode: (mode: 'select' | 'add-component') => void;
-
-  /** Whether the Stages panel (left-side floating list of @stage blocks) is
-   *  open. Persists across re-renders / tool-mode changes. */
-  stagesPanelOpen: boolean;
-  setStagesPanelOpen: (open: boolean) => void;
 }
 
 /**
@@ -225,8 +220,5 @@ export const useFlowStore = create<FlowStore>()(
 
     toolMode: 'select',
     setToolMode: (toolMode) => set({ toolMode }),
-
-    stagesPanelOpen: false,
-    setStagesPanelOpen: (open) => set({ stagesPanelOpen: open }),
   })),
 );

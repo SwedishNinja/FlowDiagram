@@ -523,7 +523,8 @@ export default function FlowCanvas() {
         // We never auto-assign to a package by cursor position: ELK often
         // stacks packages vertically so their x-ranges fully overlap, meaning
         // almost every click lands "inside" some package even when the user
-        // sees only empty canvas. Package assignment is done via the Inspector.
+        // sees only empty canvas. Package assignment is done via the
+        // properties panel.
         const { sourceText, ast } = getMutationContext();
         if (!ast) return;
         const id = generateUniqueComponentId(ast);

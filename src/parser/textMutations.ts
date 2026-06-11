@@ -319,7 +319,21 @@ export function updateStage(
   if (repeat) newLines.push(`${bodyIndent}repeat: true`);
   const newProps = newLines.length === 0 ? '' : newLines.join('\n') + '\n';
 
-  return text.slice(0, propsStart) + newProps + text.slice(propsEnd);
+  const edits: Edit[] = [{ start: propsStart, end: propsEnd, replacement: newProps }];
+
+  // The grammar also accepts `repeat:` AFTER flow blocks (flows have no
+  // repeat property, so any such line is stage-level). Scrub strays past
+  // the property block, or a toggle silently does nothing / duplicates.
+  const tailRegion = text.slice(propsEnd, stage.loc.end);
+  for (const m of tailRegion.matchAll(/^[ \t]*repeat:[^\n]*\n?/gm)) {
+    edits.push({
+      start: propsEnd + m.index!,
+      end: propsEnd + m.index! + m[0]!.length,
+      replacement: '',
+    });
+  }
+
+  return applyEdits(text, edits);
 }
 
 /**
