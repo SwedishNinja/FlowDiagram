@@ -22,6 +22,53 @@ export interface ViewerPayload {
   title?: string;
 }
 
+/** Actual content bounding box (nodes + groups). Distinct from
+ *  layout.width/height, which assume content anchored at (0,0) — dragged
+ *  positions can push content anywhere, including negative coords. */
+function contentBounds(layout: LayoutResult): { x: number; y: number; width: number; height: number } {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const r of [...layout.nodes, ...layout.groups]) {
+    minX = Math.min(minX, r.x);
+    minY = Math.min(minY, r.y);
+    maxX = Math.max(maxX, r.x + r.width);
+    maxY = Math.max(maxY, r.y + r.height);
+  }
+  if (!isFinite(minX)) return { x: 0, y: 0, width: 800, height: 600 };
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Pan/zoom that fits the content bounds centered in a rect of the given
+ *  size, expressed in computeTransform's terms (fit-scale-relative zoom +
+ *  canvas-px pan). Pure — exported for tests. */
+export function computeFitView(
+  rectWidth: number,
+  rectHeight: number,
+  layout: LayoutResult,
+): { pan: { x: number; y: number }; zoom: number } {
+  const PAD = 30;
+  const b = contentBounds(layout);
+  const scale = Math.max(
+    Math.min(
+      (rectWidth - PAD * 2) / Math.max(b.width, 1),
+      (rectHeight - PAD * 2) / Math.max(b.height, 1),
+      1.5,
+    ),
+    0.05, // degenerate rect (not laid out yet) — keep the transform sane
+  );
+  // computeTransform: scale = fitScale * zoom, offset = (rect - layout*scale)/2 + pan.
+  // Solve for the pan that puts the BOUNDS' center at the rect center:
+  //   offset* = (rect - b.width*scale)/2 - b.x*scale
+  // The rect terms cancel, leaving a rect-independent pan.
+  const fitScale = computeTransform(rectWidth, rectHeight, layout, 0, 0, 1).scale;
+  return {
+    zoom: scale / fitScale,
+    pan: {
+      x: scale * ((layout.width - b.width) / 2 - b.x),
+      y: scale * ((layout.height - b.height) / 2 - b.y),
+    },
+  };
+}
+
 export function init(payload: ViewerPayload) {
   const { doc, layout } = payload;
 
@@ -109,10 +156,15 @@ export function init(payload: ViewerPayload) {
   resetBtn?.addEventListener('click', () => {
     ps.reset();
   });
-  fitBtn?.addEventListener('click', () => {
-    pan = { x: 0, y: 0 };
-    zoom = 1;
-  });
+  const fitView = () => {
+    const rect = canvas!.getBoundingClientRect();
+    const fitted = computeFitView(rect.width, rect.height, layout);
+    pan = fitted.pan;
+    zoom = fitted.zoom;
+  };
+  fitBtn?.addEventListener('click', fitView);
+  // Start centered on the actual content, not the (0,0)-anchored default.
+  fitView();
   speedSel?.addEventListener('change', () => {
     speed = parseFloat(speedSel.value) || 1;
   });
