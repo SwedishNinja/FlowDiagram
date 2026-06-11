@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // File operations
@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   currentPath: () => ipcRenderer.invoke('file:current-path'),
   // Most recent file that still exists, or null — used to reopen on launch.
   getStartupFile: () => ipcRenderer.invoke('app:startup-file'),
+  // Filesystem path of a dropped File (File.path was removed in Electron 32).
+  pathForFile: (file) => webUtils.getPathForFile(file),
   exportGif: (data) => ipcRenderer.invoke('file:export-gif', data),
 
   // Report unsaved-changes state to main (drives the save-on-quit prompt).

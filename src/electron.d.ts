@@ -10,6 +10,7 @@ declare global {
       readFile: (path: string) => Promise<{ path: string; content: string }>;
       currentPath: () => Promise<string | null>;
       getStartupFile: () => Promise<{ path: string | null; cleanExit: boolean }>;
+      pathForFile: (file: File) => string;
       exportGif: (data: Uint8Array) => Promise<{ path: string } | null>;
       setDirtyState: (isDirty: boolean, content: string) => void;
       onQueryDirtyState: (cb: (token: number) => void) => () => void;

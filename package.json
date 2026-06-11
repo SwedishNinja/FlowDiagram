@@ -1,6 +1,6 @@
 {
   "name": "flowdiagram",
-  "version": "1.12.4",
+  "version": "1.13.0",
   "description": "",
   "repository": {
     "type": "git",
@@ -36,9 +36,18 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "docs/cheatsheet.html",
       "package.json"
     ],
     "asar": true,
+    "fileAssociations": [
+      {
+        "ext": "flow",
+        "name": "FlowDiagram Diagram",
+        "description": "FlowDiagram animated diagram",
+        "role": "Editor"
+      }
+    ],
     "win": {
       "target": [
         "nsis",

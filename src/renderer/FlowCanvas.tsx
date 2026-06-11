@@ -24,6 +24,7 @@ import {
   updateConnection,
 } from '../parser/textMutations';
 import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
+import { computeFitView } from '../viewer/viewerMain';
 import type { LayoutNode, LayoutGroup } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
@@ -171,6 +172,12 @@ export default function FlowCanvas() {
   const movedGroupsThisSessionRef = useRef<Set<string>>(new Set());
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
+  // HUD mirror of zoomRef (refs don't re-render); updated wherever zoom changes.
+  const [zoomPct, setZoomPct] = useState(100);
+  // Live stage states for the stage strip, polled from the particle engine.
+  const [stageChips, setStageChips] = useState<
+    Array<{ name: string; status: 'idle' | 'running' | 'completed'; completionCount: number }>
+  >([]);
   const hoveredIdRef = useRef<string | null>(null);
   const connectionDraftRef = useRef<{
     sourceId: string;
@@ -228,6 +235,27 @@ export default function FlowCanvas() {
       controllerRef.current.updateLayout(layout);
     }
   }, [layout]);
+
+  // Poll the engine's stage states for the stage strip. Cheap (4×/s) and
+  // only re-renders when something actually changed.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const snap = controllerRef.current?.getStageSnapshot() ?? [];
+      setStageChips((prev) => {
+        if (
+          prev.length === snap.length &&
+          prev.every((p, i) =>
+            p.name === snap[i]!.name &&
+            p.status === snap[i]!.status &&
+            p.completionCount === snap[i]!.completionCount)
+        ) {
+          return prev;
+        }
+        return snap;
+      });
+    }, 250);
+    return () => clearInterval(id);
+  }, []);
 
   // After click-to-place creates a node, open the inline rename overlay as
   // soon as the new layout pass contains it.
@@ -466,18 +494,20 @@ export default function FlowCanvas() {
   }, [getTransform]);
 
   // Mouse wheel: zoom in/out centered on cursor
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  /** Zoom toward a canvas-space anchor point, keeping it visually fixed.
+   *  Shared by the wheel handler (cursor anchor) and the HUD buttons /
+   *  shortcuts (canvas-center anchor). */
+  const zoomAtPoint = useCallback((cx: number, cy: number, factor: number) => {
     const canvas = canvasRef.current;
     const currentLayout = useFlowStore.getState().layout;
     if (!canvas || !currentLayout) return;
-
     const rect = canvas.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
 
-    const zoomDelta = -e.deltaY * 0.001;
     const oldZoom = zoomRef.current;
-    const newZoom = Math.max(0.2, Math.min(5, oldZoom * Math.exp(zoomDelta)));
+    // Allow below 0.2 only if a Fit already put us there (mirror of the
+    // viewer's clamp) so the first zoom-out doesn't snap.
+    const minZoom = Math.min(0.2, oldZoom);
+    const newZoom = Math.max(minZoom, Math.min(5, oldZoom * factor));
     if (newZoom === oldZoom) return;
 
     const transformBefore = computeTransform(rect.width, rect.height, currentLayout, panRef.current.x, panRef.current.y, oldZoom);
@@ -490,6 +520,40 @@ export default function FlowCanvas() {
 
     zoomRef.current = newZoom;
     panRef.current = { x: newPanX, y: newPanY };
+    setZoomPct(Math.round(newZoom * 100));
+  }, []);
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    zoomAtPoint(e.clientX - rect.left, e.clientY - rect.top, Math.exp(-e.deltaY * 0.001));
+  }, [zoomAtPoint]);
+
+  const zoomAtCenter = useCallback((factor: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    zoomAtPoint(rect.width / 2, rect.height / 2, factor);
+  }, [zoomAtPoint]);
+
+  /** Fit the actual content bounds (nodes + groups, wherever they were
+   *  dragged) centered in the canvas. Same math as the HTML viewer's Fit. */
+  const fitToContent = useCallback(() => {
+    const canvas = canvasRef.current;
+    const currentLayout = useFlowStore.getState().layout;
+    if (!canvas || !currentLayout) return;
+    const rect = canvas.getBoundingClientRect();
+    const { pan, zoom } = computeFitView(rect.width, rect.height, currentLayout);
+    panRef.current = pan;
+    zoomRef.current = zoom;
+    setZoomPct(Math.round(zoom * 100));
+  }, []);
+
+  const resetView = useCallback(() => {
+    panRef.current = { x: 0, y: 0 };
+    zoomRef.current = 1;
+    setZoomPct(100);
   }, []);
 
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
@@ -1022,9 +1086,8 @@ export default function FlowCanvas() {
       beginRename(node);
       return;
     }
-    panRef.current = { x: 0, y: 0 };
-    zoomRef.current = 1;
-  }, [findNodeAt, beginRename]);
+    resetView();
+  }, [findNodeAt, beginRename, resetView]);
 
   /** Commit an inline rename: set the node's DISPLAY NAME (the visible label),
    *  not its alias. The alias is an internal reference edited in the inspector;
@@ -1075,6 +1138,25 @@ export default function FlowCanvas() {
         return;
       }
       if (isEditableTarget(e.target)) return;
+
+      // View shortcuts: Ctrl+0 fit, Ctrl+= / Ctrl++ in, Ctrl+- out.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        if (e.key === '0') {
+          e.preventDefault();
+          fitToContent();
+          return;
+        }
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          zoomAtCenter(1.25);
+          return;
+        }
+        if (e.key === '-') {
+          e.preventDefault();
+          zoomAtCenter(0.8);
+          return;
+        }
+      }
 
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const { selectedIds, selectionKind, clearSelection } = useFlowStore.getState();
@@ -1142,6 +1224,80 @@ export default function FlowCanvas() {
           cursor: 'grab',
         }}
       />
+      {/* Stage strip — live status chips for each @stage. Click selects. */}
+      {stageChips.length > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 10,
+            left: 12,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 6,
+            maxWidth: 'calc(100% - 24px)',
+            pointerEvents: 'none',
+          }}
+        >
+          {stageChips.map((s) => (
+            <StageChip
+              key={s.name}
+              stage={s}
+              onClick={() => useFlowStore.getState().setSelection(s.name, 'stage')}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Zoom HUD — fit / zoom out / % / zoom in. */}
+      <div
+        style={{
+          position: 'absolute',
+          right: 12,
+          bottom: 12,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 2,
+          padding: '3px 5px',
+          background: 'var(--surface-2)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-md)',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
+        }}
+      >
+        <button onClick={fitToContent} className="fd-icon-btn" title="Fit diagram  Ctrl+0" aria-label="Fit diagram">
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M4 9V4h5 M15 4h5v5 M20 15v5h-5 M9 20H4v-5" />
+          </svg>
+        </button>
+        <button onClick={() => zoomAtCenter(0.8)} className="fd-icon-btn" title="Zoom out  Ctrl+−" aria-label="Zoom out">
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden>
+            <path d="M5 12h14" />
+          </svg>
+        </button>
+        <button
+          onClick={resetView}
+          title="Reset view to 100%"
+          aria-label="Reset view"
+          style={{
+            minWidth: 44,
+            background: 'none',
+            border: 'none',
+            color: 'var(--ink-3)',
+            fontSize: 'var(--fs-micro)',
+            fontFamily: 'var(--font-mono)',
+            cursor: 'pointer',
+            textAlign: 'center',
+          }}
+        >
+          {zoomPct}%
+        </button>
+        <button onClick={() => zoomAtCenter(1.25)} className="fd-icon-btn" title="Zoom in  Ctrl+=" aria-label="Zoom in">
+          <svg viewBox="0 0 24 24" width={12} height={12} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" aria-hidden>
+            <path d="M12 5v14 M5 12h14" />
+          </svg>
+        </button>
+      </div>
+
       <MultiSelectPopover transform={computePopoverTransform()} />
       {renameOverlay && (
         <RenameInput
@@ -1155,6 +1311,60 @@ export default function FlowCanvas() {
   );
 }
 
+
+const STAGE_STATUS_COLOR: Record<'idle' | 'running' | 'completed', string> = {
+  idle: 'var(--ink-5)',
+  running: '#3b82f6',
+  completed: '#10b981',
+};
+
+/** One pill in the stage strip: status dot + name + completion count. */
+function StageChip({
+  stage,
+  onClick,
+}: {
+  stage: { name: string; status: 'idle' | 'running' | 'completed'; completionCount: number };
+  onClick: () => void;
+}) {
+  const selectedIds = useFlowStore((s) => s.selectedIds);
+  const selectionKind = useFlowStore((s) => s.selectionKind);
+  const selected = selectionKind === 'stage' && selectedIds.includes(stage.name);
+  return (
+    <button
+      onClick={onClick}
+      title={`Stage "${stage.name}" — ${stage.status}${stage.completionCount > 0 ? `, completed ×${stage.completionCount}` : ''}. Click to select.`}
+      style={{
+        pointerEvents: 'auto',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '3px 9px',
+        background: 'var(--surface-2)',
+        border: `1px solid ${selected ? '#3b82f6' : 'var(--line)'}`,
+        borderRadius: 999,
+        color: 'var(--ink-2)',
+        fontSize: 'var(--fs-micro)',
+        fontFamily: 'var(--font-mono)',
+        cursor: 'pointer',
+        opacity: stage.status === 'idle' ? 0.65 : 1,
+      }}
+    >
+      <span
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          background: STAGE_STATUS_COLOR[stage.status],
+          boxShadow: stage.status === 'running' ? '0 0 6px #3b82f6' : 'none',
+        }}
+      />
+      <span>{stage.name}</span>
+      {stage.completionCount > 0 && (
+        <span style={{ color: 'var(--ink-4)' }}>×{stage.completionCount}</span>
+      )}
+    </button>
+  );
+}
 
 function RenameInput({
   overlay,

@@ -1,6 +1,24 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+
+// Extract a diagram file path from a command line — set when the app is
+// launched by double-clicking a .flow file (file association) or when a
+// second instance is started with one. Flags and missing files are skipped.
+function diagramFileFromArgv(argv) {
+  for (const arg of argv.slice(1)) {
+    if (!arg || arg.startsWith('-')) continue;
+    if (!/\.(flow|puml|txt)$/i.test(arg)) continue;
+    try {
+      require('fs').accessSync(arg);
+      return path.resolve(arg);
+    } catch {
+      // Not an existing file — keep looking.
+    }
+  }
+  return null;
+}
+const startupFileArg = diagramFileFromArgv(process.argv);
 
 const isDev = !app.isPackaged;
 
@@ -219,9 +237,35 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    // The cheatsheet has no life of its own — don't leave the app running
+    // with only a help window open.
+    if (cheatsheetWindow && !cheatsheetWindow.isDestroyed()) cheatsheetWindow.close();
   });
 
   updateWindowTitle();
+}
+
+// --- Help: DSL cheatsheet -----------------------------------------------
+// docs/cheatsheet.html ships in the build; open it in a simple window.
+
+let cheatsheetWindow = null;
+
+function openCheatsheet() {
+  if (cheatsheetWindow && !cheatsheetWindow.isDestroyed()) {
+    cheatsheetWindow.focus();
+    return;
+  }
+  cheatsheetWindow = new BrowserWindow({
+    width: 920,
+    height: 840,
+    title: 'FlowDiagram — DSL Cheatsheet',
+    autoHideMenuBar: true,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  cheatsheetWindow.loadFile(path.join(__dirname, '..', 'docs', 'cheatsheet.html'));
+  cheatsheetWindow.on('closed', () => {
+    cheatsheetWindow = null;
+  });
 }
 
 // --- IPC Handlers ---
@@ -305,6 +349,16 @@ ipcMain.handle('file:read', async (_event, filePath) => {
 // and opens the file through the normal file-read path — unless the last
 // exit was unclean and localStorage holds newer text (crash recovery).
 ipcMain.handle('app:startup-file', async () => {
+  // A file double-clicked in the OS beats both recents AND crash recovery —
+  // explicit user intent. cleanExit:true makes the renderer open it plainly.
+  if (startupFileArg) {
+    try {
+      await fs.access(startupFileArg);
+      return { path: startupFileArg, cleanExit: true };
+    } catch {
+      // Vanished between launch and ready — fall through to recents.
+    }
+  }
   for (const candidate of recentFiles) {
     try {
       await fs.access(candidate);
@@ -406,22 +460,52 @@ function buildMenu() {
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'DSL Cheatsheet',
+          accelerator: 'F1',
+          click: openCheatsheet,
+        },
+        { type: 'separator' },
+        {
+          label: 'GitHub Repository',
+          click: () => shell.openExternal('https://github.com/SwedishNinja/FlowDiagram'),
+        },
+      ],
+    },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
-  loadRecentFiles();
-  lastExitClean = readLastExitClean();
-  // Assume unclean until we actually quit; will-quit flips it back.
-  writeExitClean(false);
-  buildMenu();
-  createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+// Single instance: double-clicking a .flow file while the app runs should
+// open it in the existing window, not spawn a second app.
+const gotInstanceLock = app.requestSingleInstanceLock();
+if (!gotInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    const file = diagramFileFromArgv(argv);
+    if (file) mainWindow.webContents.send('menu:open-path', file);
   });
-});
+
+  app.whenReady().then(() => {
+    loadRecentFiles();
+    lastExitClean = readLastExitClean();
+    // Assume unclean until we actually quit; will-quit flips it back.
+    writeExitClean(false);
+    buildMenu();
+    createWindow();
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

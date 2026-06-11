@@ -100,6 +100,8 @@ export interface AnimationController {
   stop: () => void;
   reset: () => void;
   updateLayout: (layout: LayoutResult) => void;
+  /** Live stage states (name/status/completionCount) for UI like the stage strip. */
+  getStageSnapshot: () => Array<{ name: string; status: 'idle' | 'running' | 'completed'; completionCount: number }>;
 }
 
 export function createAnimationLoop(
@@ -230,6 +232,9 @@ export function createAnimationLoop(
       if (state.ast) {
         particleSystem.init(state.ast, layout);
       }
+    },
+    getStageSnapshot() {
+      return particleSystem.getStageSnapshot();
     },
   };
 }

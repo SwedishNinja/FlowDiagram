@@ -136,6 +136,30 @@ export function useElectronFile(): ElectronFileState {
     };
   }, [reportDirty]);
 
+  // Drag a diagram file anywhere onto the window to open it.
+  useEffect(() => {
+    if (!window.electronAPI?.pathForFile) return;
+    const onDragOver = (e: DragEvent) => e.preventDefault();
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file || !/\.(flow|puml|txt)$/i.test(file.name)) return;
+      try {
+        const p = window.electronAPI!.pathForFile(file);
+        if (p) loadFile(p);
+      } catch {
+        // Dropped item wasn't a real file on disk — ignore.
+      }
+    };
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('drop', onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Wire up menu events from Electron main process
   useEffect(() => {
     if (!window.electronAPI) return;

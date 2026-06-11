@@ -1,7 +1,8 @@
 import { useRef, useEffect } from 'react';
 import { EditorState, StateEffect, StateField, EditorSelection } from '@codemirror/state';
 import { EditorView, Decoration, type DecorationSet, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
+import { minimalChange } from './minimalDiff';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { flowdiagramLanguageSupport } from './language/flowdiagramLanguage';
@@ -173,20 +174,49 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sync external source text changes (e.g., from drag) into the editor
+  // Sync external source text changes (e.g., from drag) into the editor.
+  // Dispatch the MINIMAL changed span, not a whole-document replace: that
+  // keeps the cursor/scroll in place and records each canvas edit as a
+  // granular entry in the editor's undo history.
   useEffect(() => {
     return useFlowStore.subscribe(
       (s) => s.sourceText,
       (newText) => {
         const view = viewRef.current;
         if (!view) return;
-        const currentText = view.state.doc.toString();
-        if (currentText === newText) return;
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.length, insert: newText },
-        });
+        const change = minimalChange(view.state.doc.toString(), newText);
+        if (change) view.dispatch({ changes: change });
       },
     );
+  }, []);
+
+  // App-wide undo/redo: every visual edit lands in the editor's history, but
+  // CodeMirror only handles Ctrl+Z while it has focus. Route the shortcut
+  // from anywhere else (canvas, panels) into the same history.
+  useEffect(() => {
+    function isEditableTarget(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false;
+      if (t.isContentEditable) return true;
+      const tag = t.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || !!t.closest('.cm-editor');
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (isEditableTarget(e.target)) return; // editor & inputs handle their own
+      const view = viewRef.current;
+      if (!view) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo(view);
+        else undo(view);
+      } else if (key === 'y' && !e.shiftKey) {
+        e.preventDefault();
+        redo(view);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   // Subscribe to parse errors and update the error line decoration
