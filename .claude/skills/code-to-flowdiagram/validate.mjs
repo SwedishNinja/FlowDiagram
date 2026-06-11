@@ -13,7 +13,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PARSER_CANDIDATES = [
+  // Installed app: the build drops a copy of the generated parser next to
+  // this script (see extraFiles in package.json).
+  path.resolve(here, 'generated.js'),
+  // Repo checkout: <repo>/.claude/skills/code-to-flowdiagram/ -> repo root.
   path.resolve(here, '../../../src/parser/generated.js'),
+  // Dev-box fallback.
   '/home/christian/development/FlowDiagram/src/parser/generated.js',
 ];
 

@@ -1,6 +1,6 @@
 {
   "name": "flowdiagram",
-  "version": "1.13.0",
+  "version": "1.13.1",
   "description": "",
   "repository": {
     "type": "git",
@@ -40,6 +40,20 @@
       "package.json"
     ],
     "asar": true,
+    "extraFiles": [
+      {
+        "from": ".claude/skills/code-to-flowdiagram",
+        "to": "ai/code-to-flowdiagram"
+      },
+      {
+        "from": "src/parser/generated.js",
+        "to": "ai/code-to-flowdiagram/generated.js"
+      },
+      {
+        "from": "docs/ai-skill-readme.md",
+        "to": "ai/README.md"
+      }
+    ],
     "fileAssociations": [
       {
         "ext": "flow",
