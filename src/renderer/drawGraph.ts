@@ -1,5 +1,6 @@
 import type { LayoutResult, LayoutNode, LayoutEdge, LayoutGroup, Point } from '../types';
 import { normalizeColor } from './colorUtils';
+import { pointOnRectBorder } from '../layout/geometry';
 
 const COLORS = {
   nodeFill: '#ffffff',
@@ -478,22 +479,6 @@ export function computeHiddenNodes(
   return hidden;
 }
 
-/** Border-intersection point helper (duplicated from layoutEngine for render-time use). */
-function pointOnRectBorder(
-  cx: number, cy: number, w: number, h: number,
-  tx: number, ty: number,
-): Point {
-  const dx = tx - cx;
-  const dy = ty - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
-  const halfW = w / 2;
-  const halfH = h / 2;
-  const scale = Math.min(
-    halfW / Math.abs(dx || 1),
-    halfH / Math.abs(dy || 1),
-  );
-  return { x: cx + dx * scale, y: cy + dy * scale };
-}
 
 type Box = { x: number; y: number; width: number; height: number };
 
