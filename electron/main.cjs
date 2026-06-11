@@ -51,6 +51,35 @@ function removeRecentFile(filePath) {
   buildMenu();
 }
 
+// --- Clean-exit tracking ----------------------------------------------------
+// The renderer persists the working text to localStorage on every edit; after
+// a crash that copy is the only surviving version of unsaved work. The flag
+// lets the renderer distinguish "clean quit, reopen the file" from "crash,
+// don't clobber the recovered text with older on-disk content".
+
+let lastExitClean = true;
+
+function sessionStatePath() {
+  return path.join(app.getPath('userData'), 'session-state.json');
+}
+
+function readLastExitClean() {
+  try {
+    const raw = require('fs').readFileSync(sessionStatePath(), 'utf-8');
+    return JSON.parse(raw).cleanExit !== false;
+  } catch {
+    return true; // first run / unreadable — assume clean
+  }
+}
+
+function writeExitClean(value) {
+  try {
+    require('fs').writeFileSync(sessionStatePath(), JSON.stringify({ cleanExit: value }));
+  } catch {
+    // Non-fatal: worst case the next launch treats the exit as unclean.
+  }
+}
+
 async function openRecentFile(filePath) {
   try {
     await fs.access(filePath);
@@ -214,18 +243,20 @@ ipcMain.handle('file:read', async (_event, filePath) => {
   return { path: filePath, content };
 });
 
-// Most recent file that still exists on disk, or null. The renderer asks for
-// this once at launch and opens it through the normal file-read path.
+// Most recent file that still exists on disk (or null), plus whether the
+// previous session exited cleanly. The renderer asks for this once at launch
+// and opens the file through the normal file-read path — unless the last
+// exit was unclean and localStorage holds newer text (crash recovery).
 ipcMain.handle('app:startup-file', async () => {
   for (const candidate of recentFiles) {
     try {
       await fs.access(candidate);
-      return candidate;
+      return { path: candidate, cleanExit: lastExitClean };
     } catch {
       // Moved or deleted — try the next one.
     }
   }
-  return null;
+  return { path: null, cleanExit: lastExitClean };
 });
 
 ipcMain.handle('file:current-path', () => {
@@ -321,6 +352,9 @@ function buildMenu() {
 
 app.whenReady().then(() => {
   loadRecentFiles();
+  lastExitClean = readLastExitClean();
+  // Assume unclean until we actually quit; will-quit flips it back.
+  writeExitClean(false);
   buildMenu();
   createWindow();
 
@@ -331,4 +365,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Synchronous write — this is the last thing that runs on a graceful quit.
+app.on('will-quit', () => {
+  writeExitClean(true);
 });

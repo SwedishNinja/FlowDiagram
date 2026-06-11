@@ -340,16 +340,18 @@ export function deleteStage(text: string, doc: FlowDocument, stageName: string):
     const headerNewline = text.indexOf('\n', other.loc.start);
     if (headerNewline === -1) continue;
     const slice = text.slice(headerNewline + 1, other.loc.end);
-    const m = slice.match(/^([ \t]*after:[ \t]*)([^\n]+)([ \t]*)$/m);
+    // Lazy value group + explicit trailing-space/CR tail keeps the captured
+    // value clean on CRLF documents (greedy [^\n]+ would swallow the \r and
+    // the last list item would never match the stage name).
+    const m = slice.match(/^([ \t]*after:[ \t]*)([^\r\n]+?)[ \t]*\r?$/m);
     if (!m || m.index === undefined) continue;
     const lineStart = headerNewline + 1 + m.index;
     const valueStart = lineStart + m[1]!.length;
     const oldVal = m[2]!;
-    const newVal = oldVal
-      .split(/\s*,\s*/)
-      .filter((x) => x !== stageName)
-      .join(', ');
-    if (newVal === oldVal) continue;
+    // Filter the PARSED dep list (like buildAfterCleanupEdits) instead of
+    // re-splitting the raw text — immune to stray whitespace in the source.
+    const newVal = other.after.filter((x) => x !== stageName).join(', ');
+    if (newVal === other.after.join(', ')) continue;
     if (newVal === '') {
       // Drop the entire after: line including its trailing newline.
       const lineEnd = lineStart + m[0]!.length;

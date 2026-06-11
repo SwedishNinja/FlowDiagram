@@ -9,7 +9,7 @@ declare global {
       newFile: () => Promise<{ path: null }>;
       readFile: (path: string) => Promise<{ path: string; content: string }>;
       currentPath: () => Promise<string | null>;
-      getStartupFile: () => Promise<string | null>;
+      getStartupFile: () => Promise<{ path: string | null; cleanExit: boolean }>;
       exportGif: (data: Uint8Array) => Promise<{ path: string } | null>;
       setDirtyState: (isDirty: boolean, content: string) => void;
       listDir: (path?: string) => Promise<{ dir: string; files: { name: string; path: string }[] }>;

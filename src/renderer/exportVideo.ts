@@ -100,10 +100,19 @@ export async function exportVideo(
 
   recorder.start();
 
+  // Pace frames on WALL-CLOCK time, not rAF: MediaRecorder records in real
+  // time, so emitting one frame per rAF tick would tie playback speed to
+  // the display's refresh rate (2× too fast at 60Hz with the default 30fps,
+  // worse on 120/144Hz panels). Each frame must be on screen for exactly
+  // frameIntervalMs of real time; the absolute schedule (start + i·interval)
+  // self-corrects timer jitter instead of accumulating it.
   const totalFrames = Math.round(duration * fps);
+  const startTime = performance.now();
   for (let i = 0; i < totalFrames; i++) {
     renderFrame();
-    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const nextFrameAt = startTime + (i + 1) * frameIntervalMs;
+    const wait = nextFrameAt - performance.now();
+    if (wait > 0) await new Promise<void>((r) => setTimeout(r, wait));
   }
   renderFrame(); // final frame so the last state lands in the stream
 

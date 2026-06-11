@@ -88,12 +88,29 @@ export function useElectronFile(): ElectronFileState {
   // On launch, reopen the most recent file through the normal read path so
   // the app knows where the document came from: the window title shows the
   // file and Save writes straight back instead of prompting Save As.
+  //
+  // Crash recovery: localStorage holds the text as of the last keystroke.
+  // After an unclean exit (no quit prompt ran) that copy may be the only
+  // surviving version of unsaved work, so if it differs from the file on
+  // disk we keep it — detached from the file, as an unsaved document — and
+  // let the user decide where it goes. After a clean exit (saved, or an
+  // explicit Don't Save) the file on disk is the truth and simply loads.
   const autoOpenedRef = useRef(false);
   useEffect(() => {
     if (!window.electronAPI?.getStartupFile || autoOpenedRef.current) return;
     autoOpenedRef.current = true;
-    window.electronAPI.getStartupFile().then((path) => {
-      if (path) loadFile(path);
+    window.electronAPI.getStartupFile().then(async ({ path, cleanExit }) => {
+      if (!path) return;
+      const scratch = useFlowStore.getState().sourceText;
+      await loadFile(path);
+      if (cleanExit) return;
+      const fileContent = useFlowStore.getState().sourceText;
+      if (scratch === fileContent) return; // nothing to recover
+      window.electronAPI?.newFile(); // clear main's current path + title
+      lastSavedRef.current = null;   // recovered text is unsaved by definition
+      setCurrentPath(null);
+      useFlowStore.getState().setSourceText(scratch);
+      reportDirty();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

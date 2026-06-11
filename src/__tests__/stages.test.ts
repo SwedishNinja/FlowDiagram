@@ -184,6 +184,104 @@ a -> b as c1
   });
 });
 
+describe('stage run isolation', () => {
+  it('leftover particles/effects from a previous run do not complete the next run', async () => {
+    // every:100ms + traverse:100ms + 1s absorption ⇒ when the first arrival
+    // registers (~1.1s) and the repeat stage restarts, ~10 run-1 particles
+    // and effects are still in flight. Without run-id tagging they register
+    // into run 2, 3, … completing them instantly at the leftover cadence.
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage pulse
+  repeat: true
+  @flow ping on c1
+    every: 100ms
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const { ps } = await setup(src, { absorbMs: 1000 });
+    const count = () => ps.getStageSnapshot().find(s => s.name === 'pulse')!.completionCount;
+
+    // First arrival registers ~1.13s (spawn ~16ms + 100ms travel + 1s absorb).
+    stepFor(ps, 1400);
+    expect(count()).toBe(1);
+
+    // Run-1 leftovers register throughout this window; none may count.
+    // (Pre-fix this window racked up 4-5 bogus completions.)
+    stepFor(ps, 500);
+    expect(count()).toBe(1);
+
+    // Run 2's own particle completes the stage on the real cadence.
+    stepFor(ps, 700);
+    expect(count()).toBe(2);
+  });
+});
+
+describe('particle cap liveness', () => {
+  it('a staged one-shot blocked by the particle cap retries instead of dying', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@stage solo
+  @flow once on c1
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const { ps } = await setup(src);
+    const stage = () => ps.getStageSnapshot().find(s => s.name === 'solo')!;
+
+    // Saturated: the spawn is dropped. The one-shot must NOT be marked fired.
+    (ps as unknown as { maxParticles: number }).maxParticles = 0;
+    stepFor(ps, 300);
+    expect(stage().completionCount).toBe(0);
+    expect(stage().status).toBe('running');
+
+    // Capacity returns — the one-shot fires now and the stage completes.
+    (ps as unknown as { maxParticles: number }).maxParticles = 500;
+    stepFor(ps, 500);
+    expect(stage().completionCount).toBe(1);
+  });
+
+  it('a dependent flow blocked by the cap keeps its upstream token', async () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+b -> a as c2
+
+@flow first on c1
+  traverse_time: 100ms
+
+@stage follow
+  @flow second on c2
+    after: first
+    traverse_time: 100ms
+@end_stage
+@enduml
+`;
+    const { ps } = await setup(src);
+    const stage = () => ps.getStageSnapshot().find(s => s.name === 'follow')!;
+
+    // Let `first` spawn, then saturate before its arrival hands a token
+    // to `second`. The token must survive the saturated window.
+    stepFor(ps, 50);
+    (ps as unknown as { maxParticles: number }).maxParticles = 0;
+    stepFor(ps, 400); // `first` arrives in here; `second` can't spawn
+    expect(stage().completionCount).toBe(0);
+
+    (ps as unknown as { maxParticles: number }).maxParticles = 500;
+    stepFor(ps, 400); // token still there → `second` spawns and arrives
+    expect(stage().completionCount).toBe(1);
+  });
+});
+
 describe('arrival absorption effect', () => {
   const SCENE = `@startuml
 component "A" as a

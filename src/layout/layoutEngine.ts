@@ -138,9 +138,19 @@ function flattenElk(root: ElkNode, componentIds: Set<string>): ElkWalkResult {
   const groups = new Map<string, { x: number; y: number; width: number; height: number }>();
   const edges = new Map<string, { points: Point[] }>();
 
+  // Edge sections are NOT relative to the node whose `edges` array holds
+  // them (always root here): with hierarchyHandling INCLUDE_CHILDREN, ELK
+  // reports them relative to the edge's `container` — the lowest common
+  // ancestor of its endpoints. Resolve containers after the walk, once
+  // every container's absolute origin is known.
+  const originById = new Map<string, Point>();
+  type PendingEdge = { edge: ElkExtendedEdge; holderOrigin: Point };
+  const pendingEdges: PendingEdge[] = [];
+
   function walk(node: ElkNode, parentX: number, parentY: number) {
     const absX = parentX + (node.x ?? 0);
     const absY = parentY + (node.y ?? 0);
+    originById.set(node.id, { x: absX, y: absY });
 
     if (node.id !== 'root') {
       const box = { x: absX, y: absY, width: node.width ?? 0, height: node.height ?? 0 };
@@ -151,33 +161,41 @@ function flattenElk(root: ElkNode, componentIds: Set<string>): ElkWalkResult {
       }
     }
 
-    // ELK edges on a container store their coordinates relative to that container.
     for (const edge of node.edges ?? []) {
-      const elkEdge = edge as ElkExtendedEdge & {
-        sections?: Array<{
-          startPoint: Point;
-          endPoint: Point;
-          bendPoints?: Point[];
-        }>;
-      };
-      if (!elkEdge.sections) continue;
-      const points: Point[] = [];
-      for (const section of elkEdge.sections) {
-        points.push({ x: section.startPoint.x + absX, y: section.startPoint.y + absY });
-        if (section.bendPoints) {
-          for (const bp of section.bendPoints) {
-            points.push({ x: bp.x + absX, y: bp.y + absY });
-          }
-        }
-        points.push({ x: section.endPoint.x + absX, y: section.endPoint.y + absY });
-      }
-      edges.set(edge.id!, { points });
+      pendingEdges.push({ edge: edge as ElkExtendedEdge, holderOrigin: { x: absX, y: absY } });
     }
 
     for (const child of node.children ?? []) walk(child, absX, absY);
   }
 
   walk(root, 0, 0);
+
+  for (const { edge, holderOrigin } of pendingEdges) {
+    const elkEdge = edge as ElkExtendedEdge & {
+      container?: string;
+      sections?: Array<{
+        startPoint: Point;
+        endPoint: Point;
+        bendPoints?: Point[];
+      }>;
+    };
+    if (!elkEdge.sections) continue;
+    const origin =
+      (elkEdge.container !== undefined ? originById.get(elkEdge.container) : undefined) ??
+      holderOrigin;
+    const points: Point[] = [];
+    for (const section of elkEdge.sections) {
+      points.push({ x: section.startPoint.x + origin.x, y: section.startPoint.y + origin.y });
+      if (section.bendPoints) {
+        for (const bp of section.bendPoints) {
+          points.push({ x: bp.x + origin.x, y: bp.y + origin.y });
+        }
+      }
+      points.push({ x: section.endPoint.x + origin.x, y: section.endPoint.y + origin.y });
+    }
+    edges.set(edge.id!, { points });
+  }
+
   return { nodes, groups, edges };
 }
 

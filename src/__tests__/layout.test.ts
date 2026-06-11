@@ -47,6 +47,33 @@ a -> b as c1
     expect(edge.points[edge.points.length - 1]!.x).toBeLessThanOrEqual(nodeB.x + nodeB.width);
   });
 
+  it('edges between components inside the same package use absolute coords', async () => {
+    // ELK (hierarchyHandling INCLUDE_CHILDREN) reports such an edge's
+    // sections relative to its `container` (the package), not the root —
+    // flattenElk must add the container's origin, or the polyline renders
+    // offset by the package origin once the package is opened.
+    const doc = parseDoc(`@startuml
+package "P" as pkg {
+  component "A" as a
+  component "B" as b
+}
+a -> b as c1
+@enduml
+`);
+    const layout = await computeLayout(doc);
+    const a = layout.nodes.find(n => n.id === 'a')!;
+    const b = layout.nodes.find(n => n.id === 'b')!;
+    const edge = layout.edges.find(e => e.id === 'c1')!;
+    const first = edge.points[0]!;
+    const last = edge.points[edge.points.length - 1]!;
+
+    const touches = (p: { x: number; y: number }, n: typeof a) =>
+      p.x >= n.x - 2 && p.x <= n.x + n.width + 2 &&
+      p.y >= n.y - 2 && p.y <= n.y + n.height + 2;
+    expect(touches(first, a)).toBe(true);
+    expect(touches(last, b)).toBe(true);
+  });
+
   it('handles fan-out topology', async () => {
     const doc = parseDoc(`@startuml
 component "Source" as src

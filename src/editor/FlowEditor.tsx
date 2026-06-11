@@ -202,14 +202,27 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
     );
   }, []);
 
-  // Highlight the source range of the selected canvas element
+  // Highlight the source range of the selected canvas element. The
+  // subscription also fires on every reparse (new `ast` reference) so the
+  // highlight tracks shifting loc offsets — but the CARET must only jump
+  // when the user actually changed the selection, otherwise every 300ms
+  // debounce tick while typing would yank the cursor to the selected
+  // entity. `pendingScroll` carries the jump over to the next ast tick when
+  // the freshly selected entity isn't in the (stale) ast yet.
   useEffect(() => {
+    let lastIds: ReadonlyArray<string> | null = null;
+    let lastKind: string | null = null;
+    let pendingScroll = false;
     return useFlowStore.subscribe(
       (s) => ({ ids: s.selectedIds, kind: s.selectionKind, ast: s.ast }),
       ({ ids, kind, ast }) => {
+        if (ids !== lastIds || kind !== lastKind) pendingScroll = true;
+        lastIds = ids;
+        lastKind = kind;
         const view = viewRef.current;
         if (!view) return;
         if (ids.length === 0 || !kind || !ast) {
+          pendingScroll = false;
           view.dispatch({ effects: setSourceHighlight.of(null) });
           return;
         }
@@ -229,9 +242,11 @@ export default function FlowEditor({ onChange }: FlowEditorProps) {
         const to = Math.min(loc.end, docLen);
         view.dispatch({
           effects: setSourceHighlight.of({ from, to }),
-          selection: EditorSelection.range(from, to),
-          scrollIntoView: true,
+          ...(pendingScroll
+            ? { selection: EditorSelection.range(from, to), scrollIntoView: true }
+            : {}),
         });
+        pendingScroll = false;
       },
       { equalityFn: (a, b) => a.ids === b.ids && a.kind === b.kind && a.ast === b.ast },
     );

@@ -15,6 +15,10 @@ export interface Particle {
   reverse: boolean;
   /** Comet trail: draw a fading wake along the edge behind this dot. */
   trail: boolean;
+  /** Run generation of the flow's stage at spawn time. Arrivals only count
+   *  toward stage completion when the stage is still in the same run —
+   *  leftovers from a previous run must not complete the next one. */
+  stageRunId?: number;
 }
 
 /** Afterglow left on a line when a trailed dot arrives — the wake cools
@@ -57,6 +61,8 @@ export interface ArrivalEffect {
    *  own color into this one so it condenses already wearing the next dot's
    *  color (a blue drop handing off to a red flow turns red mid-glide). */
   handoffColor?: string;
+  /** Carried over from the particle — see Particle.stageRunId. */
+  stageRunId?: number;
 }
 
 // Distinct colors for different flows
@@ -94,6 +100,9 @@ interface StageState {
   after: string[];
   repeat: boolean;
   flowNames: Set<string>;
+  /** Run generation — bumped on every (re)start. Arrivals stamped with an
+   *  older run id are ignored for completion accounting. */
+  runId: number;
   /** Total number of times this stage has completed since init. */
   completionCount: number;
   /** How many completions of each dep we've consumed to trigger our own runs. */
@@ -174,6 +183,7 @@ export class ParticleSystem {
         after: s.after,
         repeat: s.repeat,
         flowNames: new Set(s.flowNames),
+        runId: 0,
         completionCount: 0,
         consumedDepCompletions: new Map(),
         runArrivals: new Map(),
@@ -219,9 +229,14 @@ export class ParticleSystem {
     });
   }
 
-  private spawnParticle(emitter: FlowEmitter) {
-    if (this.particles.length >= this.maxParticles) return;
+  /** Spawn a particle for the emitter. Returns false when the particle cap
+   *  is hit so callers can avoid committing state (one-shot flags, consumed
+   *  dependency tokens) for a spawn that never happened. */
+  private spawnParticle(emitter: FlowEmitter): boolean {
+    if (this.particles.length >= this.maxParticles) return false;
 
+    const stageName = emitter.flow.stage;
+    const stageRunId = stageName ? this.stageStates.get(stageName)?.runId : undefined;
     const isReverse = emitter.flow.direction === 'reverse';
     this.particles.push({
       id: this.nextParticleId++,
@@ -233,7 +248,9 @@ export class ParticleSystem {
       dataLabel: emitter.flow.data,
       reverse: isReverse,
       trail: emitter.flow.trail ?? this.defaultTrail,
+      stageRunId,
     });
+    return true;
   }
 
   /** Reset an emitter for a fresh stage run. Critical: baseline the dependent
@@ -251,9 +268,13 @@ export class ParticleSystem {
     emitter.oneShotFired = false;
   }
 
-  /** Transition a stage to running: reset per-run state and its emitters. */
+  /** Transition a stage to running: reset per-run state and its emitters.
+   *  Bumping runId invalidates in-flight particles/effects from the previous
+   *  run — without it, leftovers register into the fresh run and complete it
+   *  prematurely (instantly, for fast repeat stages). */
   private startStage(stage: StageState) {
     stage.status = 'running';
+    stage.runId += 1;
     stage.runArrivals.clear();
     for (const emitter of this.emitters) {
       if (emitter.flow.stage === stage.name) {
@@ -265,7 +286,7 @@ export class ParticleSystem {
   /** Count an arrival for `flowName` — both globally (for `after:` deps) and
    *  against the flow's stage's current run. Called when the absorption
    *  effect finishes (or immediately when effects are disabled). */
-  private registerArrival(flowName: string) {
+  private registerArrival(flowName: string, stageRunId?: number) {
     const count = this.arrivalCounts.get(flowName) ?? 0;
     this.arrivalCounts.set(flowName, count + 1);
 
@@ -273,7 +294,14 @@ export class ParticleSystem {
     const stageName = emitter?.flow.stage;
     if (stageName) {
       const stage = this.stageStates.get(stageName);
-      if (stage && stage.status === 'running') {
+      // Only count toward the stage's current run if the particle was
+      // spawned in that run — stale arrivals keep their global effect (flow
+      // `after:` deps) but must not complete a run they didn't belong to.
+      if (
+        stage &&
+        stage.status === 'running' &&
+        (stageRunId === undefined || stageRunId === stage.runId)
+      ) {
         const cur = stage.runArrivals.get(flowName) ?? 0;
         stage.runArrivals.set(flowName, cur + 1);
       }
@@ -335,12 +363,12 @@ export class ParticleSystem {
     const kind = this.effectKindFor(p.flowName);
     if (kind === 'none') {
       // No effect → no delay either; the arrival counts immediately.
-      this.registerArrival(p.flowName);
+      this.registerArrival(p.flowName, p.stageRunId);
       return;
     }
     const edge = this.edgeById.get(p.edgeId);
     if (!edge || edge.points.length < 2) {
-      this.registerArrival(p.flowName);
+      this.registerArrival(p.flowName, p.stageRunId);
       return;
     }
     // Forward particles enter the target node at the polyline's end;
@@ -354,7 +382,7 @@ export class ParticleSystem {
     if (len > 0) { dx /= len; dy /= len; } else { dx = 1; dy = 0; }
 
     if (this.effects.length >= this.maxEffects) {
-      this.registerArrival(p.flowName);
+      this.registerArrival(p.flowName, p.stageRunId);
       return;
     }
     const nodeId = p.reverse ? edge.source : edge.target;
@@ -372,6 +400,7 @@ export class ParticleSystem {
       durationMs: this.arrivalEffectMs,
       handoffPoint: handoff?.point,
       handoffColor: handoff?.color,
+      stageRunId: p.stageRunId,
     });
   }
 
@@ -395,7 +424,7 @@ export class ParticleSystem {
       for (const fx of this.effects) {
         fx.ageMs += dt;
         if (fx.ageMs >= fx.durationMs) {
-          this.registerArrival(fx.flowName);
+          this.registerArrival(fx.flowName, fx.stageRunId);
         } else {
           liveEffects.push(fx);
         }
@@ -423,7 +452,7 @@ export class ParticleSystem {
         if (this.arrivalEffectMs > 0) {
           this.spawnArrivalEffect(p);
         } else {
-          this.registerArrival(p.flowName);
+          this.registerArrival(p.flowName, p.stageRunId);
         }
       } else {
         surviving.push(p);
@@ -486,13 +515,15 @@ export class ParticleSystem {
 
     // 4. Emitter update — gated by stage status when applicable.
     for (const emitter of this.emitters) {
-      // Fire any pending (delayed) spawns whose timer has expired.
+      // Fire any pending (delayed) spawns whose timer has expired. A spawn
+      // blocked by the particle cap stays queued (at 0) and retries next
+      // tick instead of being silently dropped.
       if (emitter.pendingSpawns.length > 0) {
         const stillPending: number[] = [];
         for (const remaining of emitter.pendingSpawns) {
           const newRemaining = remaining - dt;
           if (newRemaining <= 0) {
-            this.spawnParticle(emitter);
+            if (!this.spawnParticle(emitter)) stillPending.push(0);
           } else {
             stillPending.push(newRemaining);
           }
@@ -520,8 +551,10 @@ export class ParticleSystem {
             emitter.startDelayRemaining -= dt;
             if (emitter.startDelayRemaining > 0) continue;
           }
-          this.spawnParticle(emitter);
-          emitter.oneShotFired = true;
+          // Only mark fired if the spawn actually happened — at the particle
+          // cap the one-shot retries next tick; marking it fired would mean
+          // the flow never arrives and its stage never completes.
+          if (this.spawnParticle(emitter)) emitter.oneShotFired = true;
           continue;
         }
 
@@ -540,8 +573,12 @@ export class ParticleSystem {
           this.spawnParticle(emitter);
         }
       } else {
-        // DEPENDENT: spawn one per upstream arrival set. Unchanged.
+        // DEPENDENT: spawn one per upstream arrival set.
         while (true) {
+          // At the particle cap, don't consume the upstream tokens — they'd
+          // be gone forever and the `after:` chain would stall permanently.
+          // Leave them and retry next tick.
+          if (this.particles.length >= this.maxParticles) break;
           let canFire = true;
           for (const dep of emitter.flow.after) {
             const totalArrivals = this.arrivalCounts.get(dep) ?? 0;

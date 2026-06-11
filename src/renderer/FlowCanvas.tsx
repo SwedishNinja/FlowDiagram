@@ -906,14 +906,29 @@ export default function FlowCanvas() {
       return;
     }
 
-    // Commit moved node + group positions to source text.
+    // Commit moved node + group positions to source text. A plain click
+    // moves nothing — bail before touching the @positions block at all.
+    if (
+      movedThisSessionRef.current.size === 0 &&
+      movedGroupsThisSessionRef.current.size === 0
+    ) {
+      return;
+    }
     const currentLayout = useFlowStore.getState().layout;
     const ast = useFlowStore.getState().ast;
     const sourceText = useFlowStore.getState().sourceText;
     const setSourceText = useFlowStore.getState().setSourceText;
     if (!currentLayout || !ast) return;
 
-    const positions: Record<string, { x: number; y: number }> = { ...ast.positions };
+    // Base the rewrite on the CURRENT text's positions, not the debounced
+    // store AST: `ast` lags sourceText by up to 300ms, and since the commit
+    // replaces the whole @positions block, basing it on the stale map would
+    // silently drop entries committed by a gesture in that window (drag A,
+    // quickly drag B → A snaps back).
+    const freshParse = parse(sourceText);
+    const positions: Record<string, { x: number; y: number }> = {
+      ...(freshParse.ok ? freshParse.document.positions : ast.positions),
+    };
 
     // @positions stores ABSOLUTE CENTER coordinates. When a package is
     // dragged, we write entries for the package AND every descendant that

@@ -997,6 +997,36 @@ a -> b as ab
     expect(out).toContain('@stage main');
     parseOk(out);
   });
+
+  it('cascades after: refs on CRLF documents (Windows line endings)', () => {
+    const lf = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+b -> a as ba
+
+@stage prep
+  @flow p on ab
+    every: 1s
+@end_stage
+
+@stage warmup
+  after: prep
+  @flow ping on ba
+    every: 1s
+@end_stage
+@enduml
+`;
+    const src = lf.replace(/\n/g, '\r\n');
+    const doc = parseOk(src);
+    const out = deleteStage(src, doc, 'prep');
+    expect(out).not.toContain('@stage prep');
+    // The greedy [^\n]+ regex used to capture the trailing \r into the dep
+    // value, so the last list item never matched and the dangling reference
+    // survived — making the document unparseable after the delete.
+    expect(out).not.toContain('after: prep');
+    parseOk(out);
+  });
 });
 
 describe('moveFlowToStage', () => {
