@@ -1,24 +1,5 @@
-import type { LayoutResult, LayoutNode, Point } from '../types';
-
-/** Intersection of a line from (cx,cy) to (tx,ty) with a rectangle border */
-function pointOnRectBorder(
-  cx: number, cy: number, w: number, h: number,
-  tx: number, ty: number,
-): Point {
-  const dx = tx - cx;
-  const dy = ty - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
-  const halfW = w / 2;
-  const halfH = h / 2;
-  const scale = Math.min(
-    halfW / Math.abs(dx || 1),
-    halfH / Math.abs(dy || 1),
-  );
-  return {
-    x: cx + dx * scale,
-    y: cy + dy * scale,
-  };
-}
+import type { LayoutResult, LayoutNode } from '../types';
+import { pointOnRectBorder } from './geometry';
 
 /**
  * Recompute edges connected to the given set of node IDs using straight

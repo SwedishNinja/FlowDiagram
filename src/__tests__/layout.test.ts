@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeLayout } from '../layout/layoutEngine';
 import { computeEffectiveEdges } from '../renderer/drawGraph';
+import { pointOnRectBorder } from '../layout/geometry';
 import { parse } from '../parser/parser';
 
 function parseDoc(input: string) {
@@ -45,6 +46,31 @@ a -> b as c1
     expect(edge.points[0]!.x).toBeLessThan(edge.points[edge.points.length - 1]!.x);
     expect(edge.points[0]!.x).toBeGreaterThanOrEqual(nodeA.x);
     expect(edge.points[edge.points.length - 1]!.x).toBeLessThanOrEqual(nodeB.x + nodeB.width);
+  });
+
+  it('self-loops (a -> a) render with their ELK-routed polyline', async () => {
+    const doc = parseDoc(`@startuml
+component "A" as a
+component "B" as b
+a -> a as loop
+a -> b as c1
+@enduml
+`);
+    const layout = await computeLayout(doc);
+    const effective = computeEffectiveEdges(layout, new Set());
+    const loop = effective.get('loop')!;
+    expect(loop.suppressed).toBe(false);
+    expect(loop.points.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pointOnRectBorder lands on the border even for near-aligned centers', () => {
+    // dy === 0: the y-axis must contribute no constraint. The old `dy || 1`
+    // substitution returned a point INSIDE the rect (scale = halfH).
+    const p = pointOnRectBorder(0, 0, 120, 50, 1, 0);
+    expect(p.x).toBeCloseTo(60); // on the right border
+    expect(p.y).toBeCloseTo(0);
+    const q = pointOnRectBorder(0, 0, 120, 50, 0, -1);
+    expect(q.y).toBeCloseTo(-25); // on the top border
   });
 
   it('edges between components inside the same package use absolute coords', async () => {

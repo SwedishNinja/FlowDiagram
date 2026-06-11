@@ -1,5 +1,6 @@
 import ELK, { type ElkNode, type ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
 import type { FlowDocument, LayoutResult, LayoutNode, LayoutEdge, LayoutGroup, Point, GroupNode } from '../types';
+import { pointOnRectBorder } from './geometry';
 
 const GROUP_PADDING = 20;      // space between group border and its children
 const GROUP_LABEL_HEIGHT = 24; // extra space at the top for the group label
@@ -15,30 +16,6 @@ function estimateNodeSize(displayName: string, stereotype?: string): { width: nu
   const width = Math.max(minWidth, textWidth);
   const height = stereotype ? 60 : 50;
   return { width, height };
-}
-
-/**
- * Compute the intersection point of a line from (cx,cy) to (px,py) with
- * the border of a rectangle centered at (cx,cy) with the given size.
- * Used to route edges to the border of a node instead of its center.
- */
-function pointOnRectBorder(
-  cx: number, cy: number, w: number, h: number,
-  tx: number, ty: number,
-): Point {
-  const dx = tx - cx;
-  const dy = ty - cy;
-  if (dx === 0 && dy === 0) return { x: cx, y: cy };
-  const halfW = w / 2;
-  const halfH = h / 2;
-  const scale = Math.min(
-    halfW / Math.abs(dx || 1),
-    halfH / Math.abs(dy || 1),
-  );
-  return {
-    x: cx + dx * scale,
-    y: cy + dy * scale,
-  };
 }
 
 /**

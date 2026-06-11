@@ -540,7 +540,14 @@ export function computeEffectiveEdges(
     const tgtVis = visibleAncestor(edge.target, parentOf, collapsedGroups);
 
     if (srcVis === tgtVis) {
-      result.set(edge.id, { points: [], suppressed: true });
+      // A TRUE self-loop (a -> a) on a visible node keeps its ELK-routed
+      // loop. Only edges whose endpoints merely collapse into the same
+      // container are hidden.
+      if (edge.source === edge.target && srcVis === edge.source && edge.points.length >= 2) {
+        result.set(edge.id, { points: edge.points, suppressed: false });
+      } else {
+        result.set(edge.id, { points: [], suppressed: true });
+      }
       continue;
     }
 
