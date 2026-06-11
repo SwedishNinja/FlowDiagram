@@ -683,8 +683,15 @@ export default function App() {
             try {
               const layout = await computeLayout(result.document);
               setLayout(layout);
-            } catch {
+            } catch (e) {
+              // Don't fail silently: a layout-engine error means the canvas
+              // would quietly keep showing a stale (or empty) diagram.
               setIsLayouting(false);
+              setParseResult(result.document, [{
+                message: `Layout failed: ${e instanceof Error ? e.message : String(e)}`,
+                line: 0,
+                column: 0,
+              }]);
             }
           } else {
             setParseResult(null, [result.error]);

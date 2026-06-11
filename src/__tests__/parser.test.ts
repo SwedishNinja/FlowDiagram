@@ -420,6 +420,65 @@ b -> a as c2
       if (result.ok) return;
       expect(result.error.message).toContain('Circular dependency');
     });
+
+    it('rejects a connection to an undeclared component — with a real line number', () => {
+      const input = `@startuml
+component "A" as a
+a -> ghost as c1
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('unknown component "ghost"');
+      expect(result.error.line).toBe(3);
+    });
+
+    it('rejects duplicate aliases across components and packages', () => {
+      const input = `@startuml
+component "A" as thing
+package "Also thing" as thing {
+  component "B" as b
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('Duplicate alias "thing"');
+      expect(result.error.line).toBeGreaterThan(0);
+    });
+
+    it('rejects package reference cycles instead of hanging layout', () => {
+      const input = `@startuml
+package "A" as pa {
+  package pb
+}
+package "B" as pb {
+  package pa
+}
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain('cycle');
+    });
+
+    it('validation errors carry real line numbers (flow case)', () => {
+      const input = `@startuml
+component "A" as a
+component "B" as b
+a -> b as c1
+
+@flow bad on nonexistent
+@enduml
+`;
+      const result = parse(input);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.line).toBe(6);
+    });
   });
 
   describe('full example', () => {

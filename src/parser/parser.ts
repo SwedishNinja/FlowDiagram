@@ -55,8 +55,69 @@ function assignConnectionIds(connections: RawConnection[]): ConnectionNode[] {
   }));
 }
 
-/** Validate that flows reference existing connections and flows */
-function validate(doc: FlowDocument): ParseError | null {
+/** 1-based line/column of a byte offset in the source — gives validation
+ *  errors a real location instead of L0 (which the editor can't highlight). */
+function lineColOf(input: string, offset: number | undefined): { line: number; column: number } {
+  if (offset === undefined) return { line: 0, column: 0 };
+  let line = 1;
+  let column = 1;
+  for (let i = 0; i < offset && i < input.length; i++) {
+    if (input[i] === '\n') { line++; column = 1; }
+    else column++;
+  }
+  return { line, column };
+}
+
+/** Validate cross-references the grammar can't check: connections must point
+ *  at declared components, aliases must be unique, flows must reference
+ *  existing connections/flows, stages existing stages, and the package tree
+ *  must be acyclic. Everything caught here would otherwise blow up (or hang)
+ *  in the layout engine with no visible error. */
+function validate(doc: FlowDocument, input: string): ParseError | null {
+  const at = (loc?: { start: number }) => lineColOf(input, loc?.start);
+
+  // Unique aliases across components + groups (they share the id namespace).
+  const seenIds = new Map<string, true>();
+  for (const entity of [...doc.components, ...doc.groups]) {
+    if (seenIds.has(entity.id)) {
+      return {
+        message: `Duplicate alias "${entity.id}" — component and package aliases must be unique`,
+        ...at(entity.loc),
+      };
+    }
+    seenIds.set(entity.id, true);
+  }
+
+  // Connections must reference declared components.
+  const componentIds = new Set(doc.components.map(c => c.id));
+  for (const conn of doc.connections) {
+    for (const end of [conn.source, conn.target]) {
+      if (!componentIds.has(end)) {
+        return {
+          message: `Connection "${conn.id}" references unknown component "${end}"`,
+          ...at(conn.loc),
+        };
+      }
+    }
+  }
+
+  // Package tree must be acyclic (package references can create cycles).
+  const groupById = new Map(doc.groups.map(g => [g.id, g]));
+  for (const group of doc.groups) {
+    const seen = new Set<string>([group.id]);
+    let cursor = group.parentGroup;
+    while (cursor !== undefined) {
+      if (seen.has(cursor)) {
+        return {
+          message: `Package reference cycle involving "${cursor}"`,
+          ...at(group.loc),
+        };
+      }
+      seen.add(cursor);
+      cursor = groupById.get(cursor)?.parentGroup;
+    }
+  }
+
   const connectionIds = new Set(doc.connections.map(c => c.id));
   const flowNames = new Set(doc.flows.map(f => f.name));
 
@@ -64,16 +125,14 @@ function validate(doc: FlowDocument): ParseError | null {
     if (!connectionIds.has(flow.connection)) {
       return {
         message: `Flow "${flow.name}" references unknown connection "${flow.connection}"`,
-        line: 0,
-        column: 0,
+        ...at(flow.loc),
       };
     }
     for (const dep of flow.after) {
       if (!flowNames.has(dep)) {
         return {
           message: `Flow "${flow.name}" depends on unknown flow "${dep}"`,
-          line: 0,
-          column: 0,
+          ...at(flow.loc),
         };
       }
     }
@@ -103,8 +162,7 @@ function validate(doc: FlowDocument): ParseError | null {
     if (hasCycle(flow.name)) {
       return {
         message: `Circular dependency detected involving flow "${flow.name}"`,
-        line: 0,
-        column: 0,
+        ...at(flow.loc),
       };
     }
   }
@@ -116,8 +174,7 @@ function validate(doc: FlowDocument): ParseError | null {
       if (!stageNames.has(dep)) {
         return {
           message: `Stage "${stage.name}" depends on unknown stage "${dep}"`,
-          line: 0,
-          column: 0,
+          ...at(stage.loc),
         };
       }
     }
@@ -147,8 +204,7 @@ function validate(doc: FlowDocument): ParseError | null {
     if (stageHasCycle(stage.name)) {
       return {
         message: `Circular dependency detected involving stage "${stage.name}"`,
-        line: 0,
-        column: 0,
+        ...at(stage.loc),
       };
     }
   }
@@ -168,7 +224,7 @@ export function parse(input: string): ParseResult {
       positions: raw.positions ?? {},
       settings: raw.settings ?? {},
     };
-    const validationError = validate(document);
+    const validationError = validate(document, input);
     if (validationError) {
       return { ok: false, error: validationError };
     }
