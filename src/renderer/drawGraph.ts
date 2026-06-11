@@ -448,6 +448,26 @@ export function visibleAncestor(
   return outermostCollapsed ?? id;
 }
 
+/**
+ * Node ids whose box is NOT on screen because an ancestor package is closed.
+ * Anything anchored to a node's own rect (arrival effects in particular)
+ * must skip these — their edges are rerouted to the closed package border.
+ */
+export function computeHiddenNodes(
+  layout: LayoutResult,
+  collapsedGroups: Set<string>,
+): Set<string> {
+  const hidden = new Set<string>();
+  if (collapsedGroups.size === 0) return hidden;
+  const parentOf = new Map<string, string | undefined>();
+  for (const n of layout.nodes) parentOf.set(n.id, n.parentGroup);
+  for (const g of layout.groups) parentOf.set(g.id, g.parentGroup);
+  for (const n of layout.nodes) {
+    if (visibleAncestor(n.id, parentOf, collapsedGroups) !== n.id) hidden.add(n.id);
+  }
+  return hidden;
+}
+
 /** Border-intersection point helper (duplicated from layoutEngine for render-time use). */
 function pointOnRectBorder(
   cx: number, cy: number, w: number, h: number,

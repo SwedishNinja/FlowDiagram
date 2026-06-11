@@ -1,5 +1,5 @@
 import type { LayoutResult } from '../types';
-import { drawGraph, computeEffectiveEdges, zoomCompensation } from './drawGraph';
+import { drawGraph, computeEffectiveEdges, computeHiddenNodes, zoomCompensation } from './drawGraph';
 import { ParticleSystem } from './particles';
 import { drawParticles, drawArrivalEffects, nodeLookupFromLayout } from './drawParticles';
 
@@ -170,6 +170,7 @@ export function createAnimationLoop(
     // Per-frame: which groups are closed, and how to reroute edges.
     const collapsedGroups = computeCollapsedGroups(currentLayout, state.openPackages);
     const effectiveEdges = computeEffectiveEdges(currentLayout, collapsedGroups);
+    const hiddenNodes = computeHiddenNodes(currentLayout, collapsedGroups);
 
     ctx.save();
     ctx.translate(offsetX, offsetY);
@@ -195,7 +196,7 @@ export function createAnimationLoop(
     lastTime = timestamp;
 
     drawParticles(ctx, particleSystem, (id) => effectiveEdges.get(id), zc);
-    drawArrivalEffects(ctx, particleSystem, nodeLookup, (id) => effectiveEdges.get(id));
+    drawArrivalEffects(ctx, particleSystem, nodeLookup, (id) => effectiveEdges.get(id), hiddenNodes);
 
     if (state.exportFrame) {
       drawExportFrame(ctx, state.exportFrame, scale);

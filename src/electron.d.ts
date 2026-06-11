@@ -9,6 +9,7 @@ declare global {
       newFile: () => Promise<{ path: null }>;
       readFile: (path: string) => Promise<{ path: string; content: string }>;
       currentPath: () => Promise<string | null>;
+      getStartupFile: () => Promise<string | null>;
       exportGif: (data: Uint8Array) => Promise<{ path: string } | null>;
       setDirtyState: (isDirty: boolean, content: string) => void;
       listDir: (path?: string) => Promise<{ dir: string; files: { name: string; path: string }[] }>;
@@ -17,6 +18,7 @@ declare global {
       onMenuOpen: (cb: () => void) => () => void;
       onMenuSave: (cb: () => void) => () => void;
       onMenuSaveAs: (cb: () => void) => () => void;
+      onMenuOpenPath: (cb: (path: string) => void) => () => void;
     };
   }
 }

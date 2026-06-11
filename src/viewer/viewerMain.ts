@@ -12,7 +12,7 @@
  */
 import type { FlowDocument, LayoutResult, LayoutGroup } from '../types';
 import { ParticleSystem } from '../renderer/particles';
-import { drawGraph, computeEffectiveEdges, zoomCompensation, groupToggleRect } from '../renderer/drawGraph';
+import { drawGraph, computeEffectiveEdges, computeHiddenNodes, zoomCompensation, groupToggleRect } from '../renderer/drawGraph';
 import { drawParticles, drawArrivalEffects, nodeLookupFromLayout } from '../renderer/drawParticles';
 import { computeTransform, canvasToDiagram, computeCollapsedGroups } from '../renderer/animationLoop';
 
@@ -141,7 +141,7 @@ export function init(payload: ViewerPayload) {
     lastTime = timestamp;
 
     drawParticles(ctx, ps, (id) => effectiveEdges.get(id), zc);
-    drawArrivalEffects(ctx, ps, nodeLookup, (id) => effectiveEdges.get(id));
+    drawArrivalEffects(ctx, ps, nodeLookup, (id) => effectiveEdges.get(id), computeHiddenNodes(layout, collapsed));
 
     ctx.restore();
     requestAnimationFrame(render);

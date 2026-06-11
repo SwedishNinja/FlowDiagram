@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { parse } from '../parser/parser';
 import { computeCollapsedGroups } from '../renderer/animationLoop';
+import { computeHiddenNodes } from '../renderer/drawGraph';
 import { updateGroup } from '../parser/textMutations';
 import type { LayoutResult } from '../types';
 
@@ -64,6 +65,30 @@ package "Legacy" as legacy {
     expect(doc.groups.find(g => g.id === 'backend')!.defaultOpen).toBe(true);
     expect(doc.groups.find(g => g.id === 'legacy')!.defaultOpen).toBeUndefined();
     expect(doc.groups.find(g => g.id === 'legacy')!.collapseAtPx).toBe(180);
+  });
+
+  it('computeHiddenNodes: nodes inside closed packages are hidden, others not', () => {
+    const layout = layoutWithGroups([{ id: 'outer' }, { id: 'inner', parentGroup: 'outer' }]);
+    layout.nodes = [
+      { id: 'a', displayName: 'a', parentGroup: 'inner', x: 0, y: 0, width: 10, height: 10 },
+      { id: 'b', displayName: 'b', parentGroup: 'outer', x: 0, y: 0, width: 10, height: 10 },
+      { id: 'c', displayName: 'c', x: 0, y: 0, width: 10, height: 10 },
+    ] as LayoutResult['nodes'];
+
+    // Everything closed: both nested nodes hidden, top-level node visible.
+    const allClosed = computeHiddenNodes(layout, computeCollapsedGroups(layout, {}));
+    expect(allClosed.has('a')).toBe(true);
+    expect(allClosed.has('b')).toBe(true);
+    expect(allClosed.has('c')).toBe(false);
+
+    // Outer open, inner still closed: only the innermost node stays hidden.
+    const outerOpen = computeHiddenNodes(layout, computeCollapsedGroups(layout, { outer: true }));
+    expect(outerOpen.has('a')).toBe(true);
+    expect(outerOpen.has('b')).toBe(false);
+
+    // All open: nothing hidden.
+    const allOpen = computeHiddenNodes(layout, computeCollapsedGroups(layout, { outer: true, inner: true }));
+    expect(allOpen.size).toBe(0);
   });
 
   it('updateGroup round-trips the open: line', () => {

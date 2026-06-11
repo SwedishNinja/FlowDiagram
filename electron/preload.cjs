@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   newFile: () => ipcRenderer.invoke('file:new'),
   readFile: (path) => ipcRenderer.invoke('file:read', path),
   currentPath: () => ipcRenderer.invoke('file:current-path'),
+  // Most recent file that still exists, or null — used to reopen on launch.
+  getStartupFile: () => ipcRenderer.invoke('app:startup-file'),
   exportGif: (data) => ipcRenderer.invoke('file:export-gif', data),
 
   // Report unsaved-changes state to main (drives the save-on-quit prompt).
@@ -38,5 +40,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = () => callback();
     ipcRenderer.on('menu:save-as', listener);
     return () => ipcRenderer.removeListener('menu:save-as', listener);
+  },
+  // File ▸ Open Recent — main sends the picked path for the renderer to load.
+  onMenuOpenPath: (callback) => {
+    const listener = (_event, filePath) => callback(filePath);
+    ipcRenderer.on('menu:open-path', listener);
+    return () => ipcRenderer.removeListener('menu:open-path', listener);
   },
 });

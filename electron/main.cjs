@@ -7,6 +7,68 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 let currentFilePath = null;
 
+// --- Recent files ---------------------------------------------------------
+// Persisted to userData so the app can reopen the last document on launch
+// through the normal file-read path (currentFilePath gets set, the title
+// updates, and Save writes straight back without prompting).
+
+const MAX_RECENT_FILES = 10;
+let recentFiles = [];
+
+function recentFilesStorePath() {
+  return path.join(app.getPath('userData'), 'recent-files.json');
+}
+
+function loadRecentFiles() {
+  try {
+    const raw = require('fs').readFileSync(recentFilesStorePath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      recentFiles = parsed.filter((p) => typeof p === 'string').slice(0, MAX_RECENT_FILES);
+    }
+  } catch {
+    // First run or unreadable store — start empty.
+  }
+}
+
+async function saveRecentFiles() {
+  try {
+    await fs.writeFile(recentFilesStorePath(), JSON.stringify(recentFiles, null, 2), 'utf-8');
+  } catch {
+    // Non-fatal: recents just won't survive this session.
+  }
+}
+
+function addRecentFile(filePath) {
+  recentFiles = [filePath, ...recentFiles.filter((p) => p !== filePath)].slice(0, MAX_RECENT_FILES);
+  saveRecentFiles();
+  buildMenu();
+}
+
+function removeRecentFile(filePath) {
+  recentFiles = recentFiles.filter((p) => p !== filePath);
+  saveRecentFiles();
+  buildMenu();
+}
+
+async function openRecentFile(filePath) {
+  try {
+    await fs.access(filePath);
+  } catch {
+    removeRecentFile(filePath);
+    if (mainWindow) {
+      dialog.showMessageBox(mainWindow, {
+        type: 'warning',
+        title: 'File not found',
+        message: 'File not found',
+        detail: `${filePath} no longer exists. It was removed from the recent files list.`,
+      });
+    }
+    return;
+  }
+  mainWindow?.webContents.send('menu:open-path', filePath);
+}
+
 // Mirror of the renderer's unsaved-changes state, kept current via the
 // 'app:dirty-state' IPC channel so the close handler can decide synchronously
 // whether to prompt — and has the latest content on hand to write if asked.
@@ -91,6 +153,7 @@ ipcMain.handle('file:open', async () => {
   const filePath = result.filePaths[0];
   const content = await fs.readFile(filePath, 'utf-8');
   currentFilePath = filePath;
+  addRecentFile(filePath);
   updateWindowTitle();
   return { path: filePath, content };
 });
@@ -107,6 +170,7 @@ async function saveAsHandler(content) {
   if (result.canceled || !result.filePath) return null;
   await fs.writeFile(result.filePath, content, 'utf-8');
   currentFilePath = result.filePath;
+  addRecentFile(result.filePath);
   updateWindowTitle();
   return { path: result.filePath };
 }
@@ -145,8 +209,23 @@ ipcMain.handle('file:new', () => {
 ipcMain.handle('file:read', async (_event, filePath) => {
   const content = await fs.readFile(filePath, 'utf-8');
   currentFilePath = filePath;
+  addRecentFile(filePath);
   updateWindowTitle();
   return { path: filePath, content };
+});
+
+// Most recent file that still exists on disk, or null. The renderer asks for
+// this once at launch and opens it through the normal file-read path.
+ipcMain.handle('app:startup-file', async () => {
+  for (const candidate of recentFiles) {
+    try {
+      await fs.access(candidate);
+      return candidate;
+    } catch {
+      // Moved or deleted — try the next one.
+    }
+  }
+  return null;
 });
 
 ipcMain.handle('file:current-path', () => {
@@ -201,6 +280,25 @@ function buildMenu() {
           click: () => mainWindow?.webContents.send('menu:open'),
         },
         {
+          label: 'Open Recent',
+          submenu: [
+            ...recentFiles.map((p) => ({
+              label: `${path.basename(p)} — ${path.dirname(p)}`,
+              click: () => openRecentFile(p),
+            })),
+            ...(recentFiles.length > 0 ? [{ type: 'separator' }] : []),
+            {
+              label: 'Clear Recently Opened',
+              enabled: recentFiles.length > 0,
+              click: () => {
+                recentFiles = [];
+                saveRecentFiles();
+                buildMenu();
+              },
+            },
+          ],
+        },
+        {
           label: 'Save',
           accelerator: 'CmdOrCtrl+S',
           click: () => mainWindow?.webContents.send('menu:save'),
@@ -222,6 +320,7 @@ function buildMenu() {
 }
 
 app.whenReady().then(() => {
+  loadRecentFiles();
   buildMenu();
   createWindow();
 

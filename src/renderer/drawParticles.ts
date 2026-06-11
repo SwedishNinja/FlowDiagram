@@ -651,10 +651,15 @@ export function drawArrivalEffects(
   particleSystem: ParticleSystem,
   nodeLookup: NodeLookup,
   edgeLookup: EdgeLookup,
+  hiddenNodes?: ReadonlySet<string>,
 ) {
   for (const fx of particleSystem.effects) {
     const node = nodeLookup(fx.nodeId);
     if (!node) continue;
+    // Skip effects on nodes hidden inside a closed package — the box isn't
+    // on screen, so the plume would paint over the closed layer. (The
+    // arrival still registers in the particle system; stages keep moving.)
+    if (hiddenNodes?.has(fx.nodeId)) continue;
     // Skip effects whose edge is hidden by a collapsed group.
     const eff = edgeLookup(fx.edgeId);
     if (eff && eff.suppressed) continue;

@@ -74,12 +74,29 @@ export function useElectronFile(): ElectronFileState {
 
   const loadFile = async (path: string) => {
     if (!window.electronAPI) return;
-    const result = await window.electronAPI.readFile(path);
-    lastSavedRef.current = result.content;
-    useFlowStore.getState().setSourceText(result.content);
-    setCurrentPath(result.path);
-    reportDirty();
+    try {
+      const result = await window.electronAPI.readFile(path);
+      lastSavedRef.current = result.content;
+      useFlowStore.getState().setSourceText(result.content);
+      setCurrentPath(result.path);
+      reportDirty();
+    } catch {
+      // File moved/deleted since it was recorded — keep the current document.
+    }
   };
+
+  // On launch, reopen the most recent file through the normal read path so
+  // the app knows where the document came from: the window title shows the
+  // file and Save writes straight back instead of prompting Save As.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!window.electronAPI?.getStartupFile || autoOpenedRef.current) return;
+    autoOpenedRef.current = true;
+    window.electronAPI.getStartupFile().then((path) => {
+      if (path) loadFile(path);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Report dirty state on mount and whenever the document text changes, so the
   // main process always knows whether to prompt before the window closes.
@@ -100,6 +117,7 @@ export function useElectronFile(): ElectronFileState {
       window.electronAPI.onMenuOpen(openFile),
       window.electronAPI.onMenuSave(saveFile),
       window.electronAPI.onMenuSaveAs(saveFileAs),
+      window.electronAPI.onMenuOpenPath(loadFile),
     ];
     return () => unsubs.forEach((u) => u());
     // eslint-disable-next-line react-hooks/exhaustive-deps
