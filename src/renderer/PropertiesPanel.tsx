@@ -767,7 +767,7 @@ function StageForm({ stage }: { stage: StageNode }) {
   const allFlows = useFlowStore(selectFlows);
   const [showAddFlow, setShowAddFlow] = useState(false);
 
-  const commit = (updates: { after?: string[] | null; repeat?: boolean }) => {
+  const commit = (updates: { after?: string[] | null; repeat?: boolean; color?: string | null }) => {
     const { sourceText, setSourceText, ast } = getMutationContext();
     if (!ast) return;
     const next = updateStage(sourceText, ast, stage.name, updates);
@@ -815,6 +815,13 @@ function StageForm({ stage }: { stage: StageNode }) {
   return (
     <>
       <KindBadge label="Stage" id={stage.name} />
+
+      <Field label="Color">
+        <ColorInput value={stage.color} onCommit={(v) => commit({ color: v })} />
+        <div style={{ marginTop: 4, color: 'var(--ink-5)', fontSize: 'var(--fs-micro)' }}>
+          Applies to every flow in this stage. A flow's own color overrides it.
+        </div>
+      </Field>
 
       <Field label="Repeat">
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1036,20 +1043,62 @@ function Segmented({ options, value, onChange }: { options: { value: string; lab
   );
 }
 
+// Eight primary swatches — mirror the renderer's default FLOW_COLORS palette so
+// quick picks line up with the colors flows auto-cycle through.
+const SWATCH_COLORS = [
+  '3b82f6', // blue
+  'ef4444', // red
+  '10b981', // green
+  'f59e0b', // amber
+  '8b5cf6', // violet
+  'ec4899', // pink
+  '06b6d4', // cyan
+  'f97316', // orange
+];
+
 function ColorInput({ value, onCommit }: { value: string | undefined; onCommit: (v: string | null) => void }) {
+  const current = value ? value.replace(/^#/, '').toLowerCase() : null;
   const normalized = value ? '#' + value.replace(/^#/, '') : '#111114';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <input
-        type="color"
-        value={normalized}
-        onChange={(e) => onCommit(e.target.value.replace(/^#/, ''))}
-        style={{ width: 28, height: 24, border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', padding: 2, background: 'var(--surface-3)', cursor: 'pointer', flexShrink: 0 }}
-      />
-      <code style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-micro)', color: 'var(--ink-4)', flex: 1 }}>
-        {value ? '#' + value.replace(/^#/, '') : '(none)'}
-      </code>
-      {value && <button type="button" onClick={() => onCommit(null)} style={ghostButtonStyle}>Clear</button>}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+        {SWATCH_COLORS.map((hex) => {
+          const active = current === hex;
+          return (
+            <button
+              key={hex}
+              type="button"
+              title={'#' + hex}
+              aria-label={'#' + hex}
+              onClick={() => onCommit(hex)}
+              style={{
+                width: 22,
+                height: 22,
+                padding: 0,
+                flexShrink: 0,
+                borderRadius: 'var(--r-sm)',
+                background: '#' + hex,
+                border: active ? '2px solid var(--accent)' : '1px solid var(--line)',
+                boxShadow: active ? '0 0 0 2px var(--accent-glow)' : 'none',
+                cursor: 'pointer',
+              }}
+            />
+          );
+        })}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input
+          type="color"
+          value={normalized}
+          title="Custom color"
+          onChange={(e) => onCommit(e.target.value.replace(/^#/, ''))}
+          style={{ width: 28, height: 24, border: '1px solid var(--line)', borderRadius: 'var(--r-sm)', padding: 2, background: 'var(--surface-3)', cursor: 'pointer', flexShrink: 0 }}
+        />
+        <code style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-micro)', color: 'var(--ink-4)', flex: 1 }}>
+          {value ? '#' + value.replace(/^#/, '') : '(none)'}
+        </code>
+        {value && <button type="button" onClick={() => onCommit(null)} style={ghostButtonStyle}>Clear</button>}
+      </div>
     </div>
   );
 }

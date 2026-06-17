@@ -74,6 +74,7 @@ Body
           name: entry.name,
           after: entry.after,
           repeat: entry.repeat,
+          color: entry.color,
           flowNames,
           loc: entry.loc,
         });
@@ -163,12 +164,13 @@ StageBlock
     parts:StagePart*
     _ "@end_stage" _ NL
   {
-    const stage = { type: 'stage', name, after: [], repeat: false, flows: [], loc: { start: location().start.offset, end: location().end.offset } };
+    const stage = { type: 'stage', name, after: [], repeat: false, color: undefined, flows: [], loc: { start: location().start.offset, end: location().end.offset } };
     for (const part of parts) {
       if (!part) continue;
       if (part.type === 'flow') stage.flows.push(part);
       else if (part.key === 'after') stage.after = part.value;
       else if (part.key === 'repeat') stage.repeat = part.value;
+      else if (part.key === 'color') stage.color = part.value;
     }
     return stage;
   }
@@ -177,6 +179,7 @@ StagePart
   = fb:FlowBlock { return fb; }
   / _ "after:" _ value:AfterList _ NL { return { key: 'after', value }; }
   / _ "repeat:" _ value:BoolValue _ NL { return { key: 'repeat', value }; }
+  / _ "color:" _ value:ColorSpec _ NL { return { key: 'color', value }; }
   / _ Comment NL { return null; }
   / _ NL { return null; }
 

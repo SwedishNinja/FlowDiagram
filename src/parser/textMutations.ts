@@ -272,7 +272,7 @@ export function updateStage(
   text: string,
   doc: FlowDocument,
   stageName: string,
-  updates: { after?: string[] | null; repeat?: boolean },
+  updates: { after?: string[] | null; repeat?: boolean; color?: string | null },
 ): string {
   const stage = doc.stages.find((s) => s.name === stageName);
   if (!stage?.loc) return text;
@@ -313,10 +313,13 @@ export function updateStage(
     updates.after === undefined ? stage.after : updates.after ?? [];
   const repeat =
     updates.repeat === undefined ? stage.repeat : updates.repeat;
+  const color =
+    updates.color === undefined ? stage.color : updates.color;
 
   const newLines: string[] = [];
   if (after.length > 0) newLines.push(`${bodyIndent}after: ${after.join(', ')}`);
   if (repeat) newLines.push(`${bodyIndent}repeat: true`);
+  if (color) newLines.push(`${bodyIndent}color: #${color.replace(/^#/, '')}`);
   const newProps = newLines.length === 0 ? '' : newLines.join('\n') + '\n';
 
   const edits: Edit[] = [{ start: propsStart, end: propsEnd, replacement: newProps }];

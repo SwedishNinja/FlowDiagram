@@ -190,6 +190,13 @@ export class ParticleSystem {
       });
     }
 
+    // Stage-level colors: a flow with no explicit color inherits its stage's
+    // color (if any), falling back to the cycling default palette below.
+    const stageColors = new Map<string, string>();
+    for (const stage of doc.stages) {
+      if (stage.color) stageColors.set(stage.name, stage.color);
+    }
+
     doc.flows.forEach((flow, index) => {
       const edge = edgeMap.get(flow.connection);
       if (!edge) return;
@@ -209,7 +216,8 @@ export class ParticleSystem {
         consumedArrivals.set(dep, 0);
       }
 
-      const rawColor = flow.color ?? FLOW_COLORS[index % FLOW_COLORS.length]!;
+      const stageColor = flow.stage ? stageColors.get(flow.stage) : undefined;
+      const rawColor = flow.color ?? stageColor ?? FLOW_COLORS[index % FLOW_COLORS.length]!;
       const color = normalizeColor(rawColor);
 
       const startDelay = flow.startDelayMs ?? 0;

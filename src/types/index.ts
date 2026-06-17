@@ -105,6 +105,9 @@ export interface StageNode {
   after: string[];
   /** When true, the stage auto-restarts after it completes. */
   repeat: boolean;
+  /** Shared particle color for flows in this stage (hex or named).
+   *  A flow's own `color:` overrides it. */
+  color?: string;
   /** Flow names that live in this stage. */
   flowNames: string[];
   /** Byte offsets of the @stage … @end_stage block in source. */

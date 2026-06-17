@@ -981,6 +981,38 @@ a -> b as ab
     parseOk(out);
   });
 
+  it('sets and clears a stage color', () => {
+    const doc = parseOk(SRC);
+    const set = updateStage(SRC, doc, 'warmup', { color: 'ef4444' });
+    expect(set).toMatch(/@stage warmup\n  color: #ef4444\n  @flow ping/);
+    expect(parseOk(set).stages.find((s) => s.name === 'warmup')!.color).toBe('#ef4444');
+
+    const cleared = updateStage(set, parseOk(set), 'warmup', { color: null });
+    expect(cleared).not.toContain('color:');
+    expect(parseOk(cleared).stages.find((s) => s.name === 'warmup')!.color).toBeUndefined();
+  });
+
+  it('does not strip a flow\'s own color when editing the stage', () => {
+    const src = `@startuml
+component "A" as a
+component "B" as b
+a -> b as ab
+
+@stage warmup
+  @flow ping on ab
+    every: 1s
+    color: #00ff00
+@end_stage
+@enduml
+`;
+    const doc = parseOk(src);
+    const out = updateStage(src, doc, 'warmup', { color: 'ef4444' });
+    // Stage color added, flow color preserved.
+    expect(out).toContain('color: #ef4444');
+    expect(out).toContain('color: #00ff00');
+    expect(parseOk(out).flows[0]!.color).toBe('#00ff00');
+  });
+
   it('toggles repeat even when the line sits AFTER a flow block', () => {
     const src = `@startuml
 component "A" as a

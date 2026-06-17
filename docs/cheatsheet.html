@@ -219,6 +219,7 @@ auth <span class="a">--&gt;</span> log                <span class="c">' long arr
 <span class="k">@stage</span> sync
   <span class="p">after:</span> login         <span class="c">' waits for login</span>
   <span class="p">repeat:</span> <span class="n">true</span>         <span class="c">' loops forever</span>
+  <span class="p">color:</span> <span class="n">#3b82f6</span>       <span class="c">' colors every flow in the stage</span>
   <span class="k">@flow</span> fetch <span class="k">on</span> db_conn
 <span class="k">@end_stage</span></pre>
     <ul>
@@ -226,6 +227,7 @@ auth <span class="a">--&gt;</span> log                <span class="c">' long arr
       <li>Completes when <strong>every flow inside arrived at least once</strong> this run</li>
       <li><code>after: a, b</code> — starts when all listed stages freshly complete</li>
       <li><code>repeat: true</code> — restarts after completing</li>
+      <li><code>color: #hex</code> — unifies the color of all flows in the stage; a flow's own <code>color:</code> overrides it</li>
       <li>Flows without a rate fire <strong>once per stage run</strong></li>
     </ul>
   </div>
