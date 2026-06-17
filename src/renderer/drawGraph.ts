@@ -1,6 +1,7 @@
 import type { LayoutResult, LayoutNode, LayoutEdge, LayoutGroup, Point } from '../types';
 import { normalizeColor } from './colorUtils';
 import { pointOnRectBorder } from '../layout/geometry';
+import { drawGrid, type DiagramView } from './snap';
 
 const COLORS = {
   nodeFill: '#ffffff',
@@ -65,6 +66,9 @@ export interface DrawOptions {
     cursorY: number;
     targetId: string | null;
   } | null;
+  /** When set, paint a faint background grid behind all content (snap-to-grid
+   *  editing mode). `view` is the visible diagram-space rectangle. */
+  grid?: { view: DiagramView; scale: number } | null;
 }
 
 /** Connection-handle positions for a node in diagram coords. */
@@ -656,6 +660,9 @@ export function drawGraph(ctx: CanvasRenderingContext2D, layout: LayoutResult, o
   // Background fill
   ctx.fillStyle = background;
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+  // Snap-to-grid background, behind all graph content.
+  if (options.grid) drawGrid(ctx, options.grid.view, options.grid.scale);
 
   // Build parent-of lookup (components + groups)
   const parentOf = new Map<string, string | undefined>();

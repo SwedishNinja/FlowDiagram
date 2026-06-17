@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { FlowDocument, LayoutResult } from '../types';
 import { parse, type ParseError } from '../parser/parser';
+import type { SnapMode } from '../renderer/snap';
 
 export interface FlowStore {
   // Source text
@@ -69,6 +70,11 @@ export interface FlowStore {
    *  'add-component' makes clicks on empty area create a new component. */
   toolMode: 'select' | 'add-component';
   setToolMode: (mode: 'select' | 'add-component') => void;
+
+  /** Drag-snapping mode. An app-level editing preference (persisted to
+   *  localStorage), never written into the .flow document. */
+  snapMode: SnapMode;
+  setSnapMode: (mode: SnapMode) => void;
 }
 
 /**
@@ -102,6 +108,26 @@ function loadSavedSource(): string | null {
 function saveSource(text: string) {
   try {
     localStorage.setItem(STORAGE_KEY, text);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const SNAP_KEY = 'flowdiagram-snap-mode';
+
+function loadSnapMode(): SnapMode {
+  try {
+    const v = localStorage.getItem(SNAP_KEY);
+    if (v === 'off' || v === 'align' || v === 'grid') return v;
+  } catch {
+    // ignore storage errors
+  }
+  return 'off';
+}
+
+function saveSnapMode(mode: SnapMode) {
+  try {
+    localStorage.setItem(SNAP_KEY, mode);
   } catch {
     // ignore storage errors
   }
@@ -220,5 +246,11 @@ export const useFlowStore = create<FlowStore>()(
 
     toolMode: 'select',
     setToolMode: (toolMode) => set({ toolMode }),
+
+    snapMode: loadSnapMode(),
+    setSnapMode: (snapMode) => {
+      saveSnapMode(snapMode);
+      set({ snapMode });
+    },
   })),
 );

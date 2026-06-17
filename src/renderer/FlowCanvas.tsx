@@ -25,9 +25,34 @@ import {
 } from '../parser/textMutations';
 import MultiSelectPopover, { type PopoverTransform } from './MultiSelectPopover';
 import { computeFitView } from '../viewer/viewerMain';
-import type { LayoutNode, LayoutGroup } from '../types';
+import { snapPointToGrid, snapCenterToTargets, type SnapGuide } from './snap';
+import type { LayoutNode, LayoutGroup, LayoutResult } from '../types';
 
 const GROUP_LABEL_BAND_HEIGHT = 24;
+
+/** Screen-space alignment snap threshold, in pixels (converted to diagram
+ *  units per-zoom at use). */
+const ALIGN_THRESHOLD_PX = 8;
+
+/** Collect the IDs of a group plus everything nested inside it — the subtree
+ *  that moves rigidly with the group, so it's excluded from align targets. */
+function collectGroupSubtree(groupId: string, layout: LayoutResult): Set<string> {
+  const ids = new Set<string>([groupId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const g of layout.groups) {
+      if (!ids.has(g.id) && g.parentGroup !== undefined && ids.has(g.parentGroup)) {
+        ids.add(g.id);
+        changed = true;
+      }
+    }
+  }
+  for (const n of layout.nodes) {
+    if (n.parentGroup !== undefined && ids.has(n.parentGroup)) ids.add(n.id);
+  }
+  return ids;
+}
 
 type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
@@ -170,6 +195,9 @@ export default function FlowCanvas() {
   const dragRef = useRef<DragState | null>(null);
   const movedThisSessionRef = useRef<Set<string>>(new Set());
   const movedGroupsThisSessionRef = useRef<Set<string>>(new Set());
+  // Active alignment guides for the current drag (align snap mode); read each
+  // frame by the render loop, cleared on pointer-up.
+  const snapGuidesRef = useRef<SnapGuide[] | null>(null);
   const panRef = useRef({ x: 0, y: 0 });
   const zoomRef = useRef(1);
   // HUD mirror of zoomRef (refs don't re-render); updated wherever zoom changes.
@@ -219,6 +247,8 @@ export default function FlowCanvas() {
       hoveredId: hoveredIdRef.current,
       connectionDraft: connectionDraftRef.current,
       rewireDraft: rewireDraftRef.current,
+      snapMode: useFlowStore.getState().snapMode,
+      snapGuides: snapGuidesRef.current,
     }));
 
     controllerRef.current = controller;
@@ -900,11 +930,36 @@ export default function FlowCanvas() {
     const ast = useFlowStore.getState().ast;
     if (!currentLayout || !ast) return;
 
+    const snapMode = useFlowStore.getState().snapMode;
+    const scale = getTransform()?.transform.scale ?? 1;
+
     if (drag.kind === 'group') {
       const group = currentLayout.groups.find(g => g.id === drag.groupId);
       if (!group) return;
-      const newX = coords.x - drag.offsetX;
-      const newY = coords.y - drag.offsetY;
+      let newX = coords.x - drag.offsetX;
+      let newY = coords.y - drag.offsetY;
+
+      snapGuidesRef.current = null;
+      if (snapMode === 'grid') {
+        const s = snapPointToGrid(newX, newY);
+        newX = s.x; newY = s.y;
+      } else if (snapMode === 'align') {
+        const subtree = collectGroupSubtree(group.id, currentLayout);
+        const txs: number[] = [];
+        const tys: number[] = [];
+        for (const n of currentLayout.nodes) {
+          if (subtree.has(n.id)) continue;
+          txs.push(n.x + n.width / 2); tys.push(n.y + n.height / 2);
+        }
+        for (const g of currentLayout.groups) {
+          if (subtree.has(g.id)) continue;
+          txs.push(g.x + g.width / 2); tys.push(g.y + g.height / 2);
+        }
+        const res = snapCenterToTargets(newX, newY, group.width, group.height, txs, tys, ALIGN_THRESHOLD_PX / scale);
+        newX = res.x; newY = res.y;
+        snapGuidesRef.current = res.guides.length > 0 ? res.guides : null;
+      }
+
       const dx = newX - group.x;
       const dy = newY - group.y;
       if (dx === 0 && dy === 0) return;
@@ -920,8 +975,27 @@ export default function FlowCanvas() {
     const node = currentLayout.nodes.find(n => n.id === drag.nodeId);
     if (!node) return;
 
-    node.x = coords.x - drag.offsetX;
-    node.y = coords.y - drag.offsetY;
+    let nx = coords.x - drag.offsetX;
+    let ny = coords.y - drag.offsetY;
+
+    snapGuidesRef.current = null;
+    if (snapMode === 'grid') {
+      const s = snapPointToGrid(nx, ny);
+      nx = s.x; ny = s.y;
+    } else if (snapMode === 'align') {
+      const txs: number[] = [];
+      const tys: number[] = [];
+      for (const n of currentLayout.nodes) {
+        if (n.id === drag.nodeId) continue;
+        txs.push(n.x + n.width / 2); tys.push(n.y + n.height / 2);
+      }
+      const res = snapCenterToTargets(nx, ny, node.width, node.height, txs, tys, ALIGN_THRESHOLD_PX / scale);
+      nx = res.x; ny = res.y;
+      snapGuidesRef.current = res.guides.length > 0 ? res.guides : null;
+    }
+
+    node.x = nx;
+    node.y = ny;
 
     movedThisSessionRef.current.add(drag.nodeId);
 
@@ -940,6 +1014,7 @@ export default function FlowCanvas() {
     if (!drag) return;
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     dragRef.current = null;
+    snapGuidesRef.current = null;
     if (canvasRef.current) canvasRef.current.style.cursor = 'grab';
 
     if (drag.kind === 'create-connection') {

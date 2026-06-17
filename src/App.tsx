@@ -355,10 +355,19 @@ function ClampedNumberInput({ label, min, max, step = 1, value, onChange }: Clam
   );
 }
 
+const SNAP_OPTIONS: Array<{ value: 'off' | 'align' | 'grid'; label: string; hint: string }> = [
+  { value: 'off', label: 'None', hint: 'Free-form dragging.' },
+  { value: 'align', label: 'Align', hint: 'Snap node centers to line up — straightens connectors.' },
+  { value: 'grid', label: 'Grid', hint: 'Snap the top-left corner to a background grid.' },
+];
+
 function ViewPanel({ onClose }: { onClose: () => void }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const snapMode = useFlowStore((s) => s.snapMode);
+  const setSnapMode = useFlowStore((s) => s.setSnapMode);
+  const snapHint = SNAP_OPTIONS.find((o) => o.value === snapMode)?.hint ?? '';
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
       const boundary = panelRef.current?.parentElement;
@@ -424,6 +433,26 @@ function ViewPanel({ onClose }: { onClose: () => void }) {
       </div>
       <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
         Packages are layers: click a closed package to open it, use its header toggle to close. Set a package to start open with <code style={{ color: 'var(--ink-4)' }}>open: true</code> in the DSL.
+      </span>
+
+      <div style={{ height: 1, background: 'var(--line)', margin: '2px 0' }} />
+
+      <div className="fd-label">Snap dragging</div>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        {SNAP_OPTIONS.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => setSnapMode(o.value)}
+            className={`fd-btn ${snapMode === o.value ? 'fd-btn--toggle-on' : 'fd-btn--ghost'}`}
+            style={{ flex: 1 }}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--ink-5)', lineHeight: 1.5 }}>
+        {snapHint} This is an editing aid — it isn't saved to the diagram.
       </span>
     </div>
   );

@@ -1,5 +1,6 @@
 import type { LayoutResult } from '../types';
 import { drawGraph, computeEffectiveEdges, computeHiddenNodes, zoomCompensation } from './drawGraph';
+import { drawSnapGuides, type SnapMode, type SnapGuide } from './snap';
 import { ParticleSystem } from './particles';
 import { drawParticles, drawArrivalEffects, nodeLookupFromLayout } from './drawParticles';
 
@@ -142,6 +143,11 @@ export function createAnimationLoop(
       cursorY: number;
       targetId: string | null;
     } | null;
+    /** Drag-snapping mode. 'grid' paints a background grid; 'align' shows the
+     *  active alignment guides supplied in `snapGuides`. */
+    snapMode?: SnapMode;
+    /** Active alignment guide lines (only during an 'align' drag). */
+    snapGuides?: SnapGuide[] | null;
   },
 ): AnimationController {
   const particleSystem = new ParticleSystem();
@@ -180,6 +186,14 @@ export function createAnimationLoop(
 
     const zc = zoomCompensation(scale);
 
+    // Visible diagram-space rectangle (for the grid + alignment guides).
+    const view = {
+      x: -offsetX / scale,
+      y: -offsetY / scale,
+      width: rect.width / scale,
+      height: rect.height / scale,
+    };
+
     drawGraph(ctx, currentLayout, {
       collapsedGroups,
       effectiveEdges,
@@ -189,7 +203,12 @@ export function createAnimationLoop(
       hoveredId: state.hoveredId ?? null,
       connectionDraft: state.connectionDraft ?? null,
       rewireDraft: state.rewireDraft ?? null,
+      grid: state.snapMode === 'grid' ? { view, scale } : null,
     });
+
+    if (state.snapMode === 'align' && state.snapGuides && state.snapGuides.length > 0) {
+      drawSnapGuides(ctx, state.snapGuides, view, scale);
+    }
 
     if (state.isPlaying && lastTime !== null) {
       const deltaMs = Math.min(timestamp - lastTime, 50);
